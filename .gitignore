@@ -1,0 +1,47 @@
+# Python
+__pycache__/
+*.py[cod]
+*.pyo
+*.egg-info/
+*.egg
+
+# 虚拟环境
+.venv/
+venv/
+env/
+
+# 打包输出
+build/
+dist/
+*.spec
+
+# IDE
+.idea/
+.vscode/
+*.swp
+
+# 运行时数据
+data/*.json
+!data/.gitkeep
+output/*
+!output/.gitkeep
+
+# 外部工具（体积大，单独下载，不纳入版本控制）
+support/*
+!support/README.md
+
+# 大体积媒体文件（测试素材，不纳入版本控制；动画帧应为 PNG）
+*.gif
+*.mp3
+*.mp4
+*.wav
+*.avi
+*.mov
+*.mkv
+
+# 日志
+*.log
+
+# 系统文件
+.DS_Store
+Thumbs.db
