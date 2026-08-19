@@ -1,215 +1,93 @@
-"""FSM（有限状态机）模块.
+"""FSM 有限状态机模块
 
-按照框架文档第 3 章的状态机设计实现。
-状态定义、转换条件、动画映射均与框架文档保持一致。
+管理宠物的状态定义和状态转换。
+每个状态有对应的行为，状态之间通过触发条件进行转换。
 """
 
-from __future__ import annotations
+from enum import Enum
 
-from collections import defaultdict
-from dataclasses import dataclass, field
-from enum import Enum, auto
-from typing import Callable
+from PySide6.QtCore import QObject, Signal
 
 
 class PetState(Enum):
-    """宠物状态枚举.
+    """宠物状态枚举"""
+    IDLE = "idle"              # 待机
+    WALKING = "walking"       # 行走
+    DRAGGING = "dragging"     # 被拖拽
+    EATING = "eating"         # 吃东西
+    ASKING_FOOD = "asking"    # 求投喂
+    FEEDING = "feeding"       # 喂食
+    RELEASED = "released"     # 松开（拖拽结束过渡）
+    SLEEPING = "sleeping"     # 睡觉（预留）
+    PLAYING = "playing"       # 玩耍（预留）
+    ANGRY = "angry"           # 生气（预留）
 
-    对应框架文档 3.1 节状态定义表。
+
+# 状态是否可被打断（用于判断是否允许强制切换状态）
+INTERRUPTIBLE = {
+    PetState.IDLE: True,
+    PetState.WALKING: True,
+    PetState.DRAGGING: False,
+    PetState.EATING: False,
+    PetState.ASKING_FOOD: True,
+    PetState.FEEDING: False,
+    PetState.RELEASED: True,
+    PetState.SLEEPING: True,
+    PetState.PLAYING: True,
+    PetState.ANGRY: True,
+}
+
+
+class StateMachine(QObject):
+    """有限状态机
+
+    管理状态转换，当状态变化时发出信号。
     """
 
-    IDLE = auto()          # 待机：宠物静止站立，无动作
-    WALKING = auto()       # 行走：宠物在桌面上随机走动
-    DRAGGING = auto()      # 被拖拽：用户按住左键拖动宠物
-    EATING = auto()        # 吃东西：播放吃猪蹄动画
-    ASKING_FOOD = auto()   # 求投喂：宠物做出期待表情，刷出葡萄汁图片
-    FEEDING = auto()       # 喂食：用户投喂后宠物吃东西，然后吐出豆腐
-    RELEASED = auto()      # 松开：拖拽结束后播放的过渡动画
-    SLEEPING = auto()      # 睡觉（待扩展）
-    PLAYING = auto()       # 玩耍（待扩展）
-    ANGRY = auto()         # 生气（待扩展）
+    # 状态变化信号：参数为 (旧状态, 新状态)
+    state_changed = Signal(PetState, PetState)
 
-
-# 状态是否可被打断（对应框架文档 3.1 节"是否可被打断"列）
-INTERRUPTIBLE_STATES: frozenset[PetState] = frozenset({
-    PetState.IDLE,
-    PetState.WALKING,
-    PetState.ASKING_FOOD,
-    PetState.RELEASED,
-    PetState.SLEEPING,
-    PetState.PLAYING,
-    PetState.ANGRY,
-})
-
-
-# 状态对应的动画配置（对应框架文档 3.3 节动画帧映射表）
-# (帧数量, 帧率 FPS)
-STATE_ANIMATION_CONFIG: dict[PetState, tuple[int, int]] = {
-    PetState.IDLE:        (8, 10),
-    PetState.WALKING:     (12, 15),
-    PetState.DRAGGING:    (1, 1),    # 静态图片
-    PetState.RELEASED:    (5, 15),
-    PetState.EATING:      (20, 20),
-    PetState.ASKING_FOOD: (10, 12),
-    PetState.FEEDING:     (25, 20),
-    PetState.SLEEPING:    (6, 5),
-    PetState.PLAYING:     (15, 15),
-    PetState.ANGRY:       (10, 12),
-}
-
-
-# 状态对应的动画帧目录名（assets/ 下的子目录名）
-STATE_ASSETS_DIR: dict[PetState, str] = {
-    PetState.IDLE:        "idle",
-    PetState.WALKING:     "walking",
-    PetState.DRAGGING:    "dragging",
-    PetState.RELEASED:    "released",
-    PetState.EATING:      "eating",
-    PetState.ASKING_FOOD: "asking_food",
-    PetState.FEEDING:     "feeding",
-    PetState.SLEEPING:    "sleeping",
-    PetState.PLAYING:     "playing",
-    PetState.ANGRY:       "angry",
-}
-
-
-# 触发条件类型（对应框架文档 3.2 节状态转换条件表）
-class Trigger(Enum):
-    """状态转换触发条件."""
-
-    RANDOM_WALK = auto()          # 随机触发行走
-    REACHED_BOUNDARY = auto()     # 到达屏幕边界
-    RANDOM_STOP = auto()          # 随机停止
-    LEFT_PRESS = auto()           # 用户左键按住宠物（移动距离>5像素）
-    LEFT_RELEASE = auto()         # 用户松开左键
-    MENU_EAT = auto()             # 右键选择"吃东西"
-    MENU_ASK_FOOD = auto()        # 右键选择"求投喂"
-    MENU_FEED = auto()            # 右键选择"喂食"
-    FOOD_CLICKED = auto()         # 用户点击葡萄汁图片
-    ASK_FOOD_TIMEOUT = auto()     # 超时未投喂
-    ANIMATION_DONE = auto()       # 动画播放完毕
-    LONG_IDLE = auto()            # 长时间未互动
-    USER_CLICK = auto()           # 用户点击宠物
-    SLEEP_DONE = auto()           # 睡眠时间结束
-    PLAY_DONE = auto()            # 玩耍时间结束
-    USER_SOOTHE = auto()          # 用户安抚
-
-
-# 默认状态转换表（对应框架文档 3.2 节）
-# 键: (当前状态, 触发条件), 值: 目标状态
-_DEFAULT_TRANSITIONS: dict[tuple[PetState, Trigger], PetState] = {
-    (PetState.IDLE,        Trigger.RANDOM_WALK):      PetState.WALKING,
-    (PetState.IDLE,        Trigger.MENU_EAT):         PetState.EATING,
-    (PetState.IDLE,        Trigger.MENU_ASK_FOOD):    PetState.ASKING_FOOD,
-    (PetState.IDLE,        Trigger.LEFT_PRESS):       PetState.DRAGGING,
-    (PetState.IDLE,        Trigger.LONG_IDLE):        PetState.SLEEPING,
-    (PetState.WALKING,     Trigger.REACHED_BOUNDARY): PetState.IDLE,
-    (PetState.WALKING,     Trigger.LEFT_PRESS):       PetState.DRAGGING,
-    (PetState.WALKING,     Trigger.RANDOM_STOP):      PetState.IDLE,
-    (PetState.DRAGGING,    Trigger.LEFT_RELEASE):     PetState.RELEASED,
-    (PetState.RELEASED,    Trigger.ANIMATION_DONE):   PetState.IDLE,
-    (PetState.EATING,      Trigger.ANIMATION_DONE):   PetState.IDLE,
-    (PetState.ASKING_FOOD, Trigger.FOOD_CLICKED):     PetState.FEEDING,
-    (PetState.ASKING_FOOD, Trigger.ASK_FOOD_TIMEOUT): PetState.IDLE,
-    (PetState.FEEDING,     Trigger.ANIMATION_DONE):   PetState.IDLE,
-    (PetState.SLEEPING,    Trigger.USER_CLICK):       PetState.IDLE,
-    (PetState.SLEEPING,    Trigger.SLEEP_DONE):       PetState.IDLE,
-    (PetState.PLAYING,     Trigger.PLAY_DONE):        PetState.IDLE,
-    (PetState.ANGRY,       Trigger.USER_SOOTHE):      PetState.IDLE,
-}
-
-
-@dataclass
-class StateChangedPayload:
-    """状态切换时回调的载荷."""
-
-    old_state: PetState
-    new_state: PetState
-    trigger: Trigger
-
-
-class PetStateMachine:
-    """宠物有限状态机.
-
-    使用方式：
-        fsm = PetStateMachine()
-        fsm.on_state_changed.append(my_callback)
-        fsm.transition(Trigger.LEFT_PRESS)
-        print(fsm.current_state)
-    """
-
-    def __init__(self, initial_state: PetState = PetState.IDLE) -> None:
-        self._current = initial_state
-        self._transitions: dict[tuple[PetState, Trigger], PetState] = dict(
-            _DEFAULT_TRANSITIONS
-        )
-        # 状态切换回调列表
-        self.on_state_changed: list[Callable[[StateChangedPayload], None]] = []
+    def __init__(self, initial_state=PetState.IDLE):
+        super().__init__()
+        self._state = initial_state
+        self._previous_state = initial_state
 
     @property
-    def current_state(self) -> PetState:
-        """当前状态."""
-        return self._current
+    def state(self):
+        """当前状态"""
+        return self._state
 
-    def can_transition(self, trigger: Trigger) -> bool:
-        """判断当前状态下能否响应指定触发条件."""
-        return (self._current, trigger) in self._transitions
+    @property
+    def previous_state(self):
+        """上一个状态"""
+        return self._previous_state
 
-    def transition(self, trigger: Trigger) -> PetState:
-        """尝试根据触发条件切换状态.
+    def can_interrupt(self):
+        """当前状态是否可被打断"""
+        return INTERRUPTIBLE.get(self._state, True)
 
-        Args:
-            trigger: 触发条件。
+    def transition_to(self, new_state):
+        """转换到新状态
 
-        Returns:
-            切换后的状态（若未切换则为原状态）。
-
-        Raises:
-            ValueError: 当前状态无法响应该触发条件。
+        如果当前状态不可打断且新状态不是强制优先级，则拒绝转换。
+        DRAGGING 状态始终可以强制转换（用户操作优先）。
         """
-        key = (self._current, trigger)
-        if key not in self._transitions:
-            raise ValueError(
-                f"状态 {self._current.name} 无法响应触发条件 {trigger.name}"
-            )
-
-        old_state = self._current
-        new_state = self._transitions[key]
-        self._current = new_state
-
-        payload = StateChangedPayload(
-            old_state=old_state, new_state=new_state, trigger=trigger
-        )
-        for callback in self.on_state_changed:
-            callback(payload)
-
-        return new_state
-
-    def try_transition(self, trigger: Trigger) -> bool:
-        """尝试切换状态，失败时返回 False 而非抛出异常."""
-        try:
-            self.transition(trigger)
+        if new_state == self._state:
             return True
-        except ValueError:
+
+        # 当前状态不可打断时，只有强制操作（如拖拽）才能切换
+        if not self.can_interrupt() and new_state != PetState.DRAGGING:
             return False
 
-    def is_interruptible(self) -> bool:
-        """当前状态是否可被打断."""
-        return self._current in INTERRUPTIBLE_STATES
+        self._previous_state = self._state
+        self._state = new_state
+        self.state_changed.emit(self._previous_state, self._state)
+        return True
 
-    def add_transition(
-        self, from_state: PetState, trigger: Trigger, to_state: PetState
-    ) -> None:
-        """添加自定义状态转换规则（用于扩展）."""
-        self._transitions[(from_state, trigger)] = to_state
-
-
-__all__ = [
-    "PetState",
-    "Trigger",
-    "INTERRUPTIBLE_STATES",
-    "STATE_ANIMATION_CONFIG",
-    "STATE_ASSETS_DIR",
-    "StateChangedPayload",
-    "PetStateMachine",
-]
+    def force_transition(self, new_state):
+        """强制转换状态（忽略打断限制）"""
+        if new_state == self._state:
+            return
+        self._previous_state = self._state
+        self._state = new_state
+        self.state_changed.emit(self._previous_state, self._state)

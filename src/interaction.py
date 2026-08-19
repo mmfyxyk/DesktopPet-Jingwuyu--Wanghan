@@ -1,142 +1,177 @@
-"""交互逻辑模块.
+"""交互逻辑模块
 
-按照框架文档第 4 章交互方式设计实现：
-- 4.1 右键菜单
-- 4.2 左键点击 vs 拖拽的区分（移动距离阈值 5 像素）
-- 4.3 投喂交互流程
-- 4.4 吃东西交互流程
+管理吃东西、求投喂、喂食等交互流程。
+物品图片使用独立的透明窗口显示，可被用户拖拽。
 """
 
-from __future__ import annotations
+from PySide6.QtCore import Qt, Signal, QTimer
+from PySide6.QtWidgets import QWidget, QLabel
 
-import logging
-from typing import TYPE_CHECKING
-
-from PySide6.QtCore import QPoint, Qt
-from PySide6.QtGui import QAction, QMouseEvent
-from PySide6.QtWidgets import QMenu
-
-from .pet_state_machine import PetState, Trigger
-
-if TYPE_CHECKING:
-    from .main_window import PetWindow
-
-logger = logging.getLogger(__name__)
-
-# 框架文档 4.2 节：点击与拖拽的移动距离阈值（像素）
-DRAG_THRESHOLD = 5
+from .pet_state_machine import PetState
 
 
-class InteractionHandler:
-    """交互处理器.
+class ItemWindow(QWidget):
+    """物品窗口 - 显示物品图片的透明小窗口，支持拖拽"""
 
-    负责处理鼠标事件、右键菜单，并将交互转换为状态机触发条件。
+    # 物品被点击信号
+    item_clicked = Signal(str)
+
+    def __init__(self, item_name: str, pixmap, parent_pos=None, parent=None):
+        super().__init__(parent)
+        self._item_name = item_name
+        self._dragging = False
+        self._drag_offset = None
+
+        self.setWindowFlags(
+            Qt.FramelessWindowHint |
+            Qt.WindowStaysOnTopHint |
+            Qt.Tool
+        )
+        self.setAttribute(Qt.WA_TranslucentBackground)
+
+        self._label = QLabel(self)
+        # 使用传入的已缩放物品图片
+        self._pixmap = pixmap
+        self._label.setPixmap(self._pixmap)
+        self._label.setFixedSize(self._pixmap.size())
+        self.setFixedSize(self._pixmap.size())
+
+        # 在宠物附近显示
+        if parent_pos:
+            self.move(parent_pos.x() + 80, parent_pos.y() + 20)
+
+    @property
+    def item_name(self):
+        return self._item_name
+
+    def mousePressEvent(self, event):
+        if event.button() == Qt.LeftButton:
+            self._dragging = False
+            self._drag_offset = event.globalPosition().toPoint() - self.pos()
+
+    def mouseMoveEvent(self, event):
+        if event.buttons() == Qt.LeftButton and self._drag_offset:
+            distance = (event.globalPosition().toPoint() -
+                        self.pos() - self._drag_offset).manhattanLength()
+            if distance > 5:
+                self._dragging = True
+            self.move(event.globalPosition().toPoint() - self._drag_offset)
+
+    def mouseReleaseEvent(self, event):
+        if event.button() == Qt.LeftButton:
+            if not self._dragging:
+                # 点击 - 发出信号
+                self.item_clicked.emit(self._item_name)
+            self._drag_offset = None
+
+    def auto_hide(self, delay_ms: int = 5000):
+        """延迟自动隐藏"""
+        QTimer.singleShot(delay_ms, self.close)
+
+
+class InteractionManager:
+    """交互管理器
+
+    管理吃东西、求投喂、喂食的完整流程。
+    由 PetWindow 调用，操作状态机和生成物品。
     """
 
-    def __init__(self, window: "PetWindow") -> None:
-        self._window = window
-        self._fsm = window.fsm
-        self._animator = window.animator
+    def __init__(self, state_machine, animator, pet_window):
+        """
+        :param state_machine: StateMachine 实例
+        :param animator: PetAnimator 实例
+        :param pet_window: PetWindow 实例（用于获取位置等）
+        """
+        self.sm = state_machine
+        self.animator = animator
+        self.pet_window = pet_window
+        self._active_items = []  # 当前活跃的物品窗口列表
 
-        # 拖拽相关状态
-        self._press_pos: QPoint | None = None        # 左键按下时的全局位置
-        self._drag_origin: QPoint | None = None      # 窗口原始位置
-        self._is_dragging = False
-
-        self._setup_context_menu()
-
-    # ------------------------------------------------------------------
-    # 右键菜单（框架 4.1 节）
-    # ------------------------------------------------------------------
-    def _setup_context_menu(self) -> None:
-        self._menu = QMenu(self._window)
-        self._menu.setStyleSheet(
-            "QMenu { background: #fff; border: 1px solid #ccc; }"
-            "QMenu::item { padding: 6px 20px; }"
-            "QMenu::item:selected { background: #e0f7ff; }"
-        )
-
-        act_eat = QAction("吃东西", self._window)
-        act_eat.triggered.connect(
-            lambda: self._fsm.try_transition(Trigger.MENU_EAT)
-        )
-        self._menu.addAction(act_eat)
-
-        act_ask = QAction("求投喂", self._window)
-        act_ask.triggered.connect(
-            lambda: self._fsm.try_transition(Trigger.MENU_ASK_FOOD)
-        )
-        self._menu.addAction(act_ask)
-
-        act_feed = QAction("喂食", self._window)
-        act_feed.triggered.connect(
-            lambda: self._fsm.try_transition(Trigger.MENU_FEED)
-        )
-        self._menu.addAction(act_feed)
-
-        self._menu.addSeparator()
-
-        # 设置子菜单（框架 4.1 节）
-        menu_settings = QMenu("设置", self._window)
-        act_topmost = QAction("窗口置顶", self._window)
-        act_topmost.setCheckable(True)
-        act_topmost.setChecked(True)
-        act_topmost.triggered.connect(self._window.toggle_topmost)
-        menu_settings.addAction(act_topmost)
-        self._menu.addMenu(menu_settings)
-
-        self._menu.addSeparator()
-
-        act_quit = QAction("退出", self._window)
-        act_quit.triggered.connect(self._window.close)
-        self._menu.addAction(act_quit)
-
-    def show_context_menu(self, pos: QPoint) -> None:
-        """在指定位置显示右键菜单."""
-        self._menu.exec(self._window.mapToGlobal(pos))
-
-    # ------------------------------------------------------------------
-    # 左键交互：点击 vs 拖拽（框架 4.2 节）
-    # ------------------------------------------------------------------
-    def on_mouse_press(self, event: QMouseEvent) -> None:
-        if event.button() != Qt.MouseButton.LeftButton:
+    def start_eating(self):
+        """吃东西流程：播放动画 → 生成骨头 → 回到待机"""
+        if not self.sm.transition_to(PetState.EATING):
             return
-        self._press_pos = event.globalPosition().toPoint()
-        self._drag_origin = self._window.pos()
-        self._is_dragging = False
+        self.animator.play(PetState.EATING)
+        self.animator.play_sound()
 
-    def on_mouse_move(self, event: QMouseEvent) -> None:
-        if self._press_pos is None or self._drag_origin is None:
+        # 播放一段时间后生成骨头
+        QTimer.singleShot(3000, self._spawn_bone)
+
+    def _spawn_bone(self):
+        """生成骨头物品"""
+        pixmap = self.animator.get_item_pixmap()
+        item = ItemWindow("骨头", pixmap, self.pet_window.pos())
+        item.show()
+        item.auto_hide(5000)
+        self._active_items.append(item)
+
+        # 回到待机
+        self.sm.transition_to(PetState.IDLE)
+        self.animator.play(PetState.IDLE)
+
+    def start_asking_food(self):
+        """求投喂流程：进入求投喂状态 → 生成葡萄汁 → 等待用户投喂"""
+        if not self.sm.transition_to(PetState.ASKING_FOOD):
             return
-        if not (event.buttons() & Qt.MouseButton.LeftButton):
+        self.animator.play(PetState.ASKING_FOOD)
+
+        # 生成葡萄汁物品（可拖拽到宠物身上）
+        pixmap = self.animator.get_item_pixmap()
+        item = ItemWindow("葡萄汁", pixmap, self.pet_window.pos())
+        item.item_clicked.connect(self._on_food_given)
+        item.show()
+        self._active_items.append(item)
+
+        # 10秒超时未投喂则回到待机
+        self._ask_timer = QTimer.singleShot(10000, self._on_ask_timeout)
+
+    def _on_food_given(self, item_name):
+        """用户点击/拖拽葡萄汁到宠物身上 → 进入喂食"""
+        # 关闭葡萄汁物品
+        for item in self._active_items[:]:
+            if item.item_name == "葡萄汁":
+                item.close()
+                self._active_items.remove(item)
+
+        self.sm.transition_to(PetState.FEEDING)
+        self.animator.play(PetState.FEEDING)
+
+        # 播放一段时间后生成豆腐
+        QTimer.singleShot(3000, self._spawn_tofu)
+
+    def _spawn_tofu(self):
+        """生成豆腐物品"""
+        pixmap = self.animator.get_item_pixmap()
+        item = ItemWindow("豆腐", pixmap, self.pet_window.pos())
+        item.show()
+        item.auto_hide(5000)
+        self._active_items.append(item)
+
+        self.sm.transition_to(PetState.IDLE)
+        self.animator.play(PetState.IDLE)
+
+    def _on_ask_timeout(self):
+        """求投喂超时，回到待机"""
+        if self.sm.state == PetState.ASKING_FOOD:
+            # 关闭葡萄汁
+            for item in self._active_items[:]:
+                if item.item_name == "葡萄汁":
+                    item.close()
+                    self._active_items.remove(item)
+
+            self.sm.transition_to(PetState.IDLE)
+            self.animator.play(PetState.IDLE)
+
+    def start_feeding(self):
+        """喂食流程：喂用户豆腐，给用户豆腐图片"""
+        if not self.sm.transition_to(PetState.FEEDING):
             return
+        self.animator.play(PetState.FEEDING)
 
-        global_pos = event.globalPosition().toPoint()
-        moved = (global_pos - self._press_pos).manhattanLength()
+        QTimer.singleShot(3000, self._spawn_tofu)
 
-        if not self._is_dragging and moved >= DRAG_THRESHOLD:
-            # 超过阈值，进入拖拽状态
-            self._is_dragging = True
-            self._fsm.try_transition(Trigger.LEFT_PRESS)
-
-        if self._is_dragging:
-            delta = global_pos - self._press_pos
-            self._window.move(self._drag_origin + delta)
-
-    def on_mouse_release(self, event: QMouseEvent) -> None:
-        if event.button() != Qt.MouseButton.LeftButton:
-            return
-
-        if self._is_dragging:
-            # 拖拽结束
-            self._fsm.try_transition(Trigger.LEFT_RELEASE)
-        else:
-            # 未超过阈值视为点击
-            self._fsm.try_transition(Trigger.USER_CLICK)
-
-        self._press_pos = None
-        self._drag_origin = None
-        self._is_dragging = False
-
-
-__all__ = ["InteractionHandler", "DRAG_THRESHOLD"]
+    def cleanup(self):
+        """清理所有活跃物品"""
+        for item in self._active_items:
+            item.close()
+        self._active_items.clear()

@@ -1,182 +1,175 @@
-"""动画管理模块.
+"""动画管理模块
 
-负责按状态加载并播放对应的动画帧。
-按照框架文档 3.3 节动画帧映射表实现。
+根据宠物状态切换动画/图片。
+当前使用试验素材：
+- 试.gif  → 动画（IDLE/WALKING/EATING 等状态共用）
+- 试.png  → 静态图（DRAGGING 状态）
+- 试_物品东西.png → 物品图（骨头/豆腐/葡萄汁）
+- 试.mp3  → 音效
 
-注意：QPixmap/QImage 对象必须保存为实例属性，避免被 Python GC 回收
-导致 Qt 侧资源被释放而无法显示（框架文档 9.1 节注意事项）。
+后期替换正式素材时，只需修改 ASSET_MAP 映射表。
 """
 
-from __future__ import annotations
+from PySide6.QtCore import QObject, QTimer, Signal, QSize, Qt, QUrl
+from PySide6.QtGui import QPixmap, QMovie, QImageReader
+from PySide6.QtWidgets import QLabel
+from PySide6.QtMultimedia import QMediaPlayer, QAudioOutput
 
-import logging
-from pathlib import Path
-from typing import TYPE_CHECKING
+from .pet_state_machine import PetState
+from .resource_manager import get_asset_path
 
-from PySide6.QtCore import QObject, QTimer, Signal
-from PySide6.QtGui import QPixmap
 
-from .pet_state_machine import (
-    STATE_ANIMATION_CONFIG,
-    STATE_ASSETS_DIR,
-    PetState,
-)
-from .resource_manager import get_assets_dir
+# ======================== 可调配置 ========================
 
-if TYPE_CHECKING:
-    from .main_window import PetWindow
+# 宠物显示高度（像素），按原始宽高比等比缩放
+# 桌面宠物通常 200-300 像素高，后期可随时调整
+PET_HEIGHT = 240
+# 物品显示高度（像素）
+ITEM_HEIGHT = 80
 
-logger = logging.getLogger(__name__)
+
+# ======================== 素材映射 ========================
+
+# 状态 → 素材文件映射（后期替换正式素材时改这里）
+ASSET_MAP = {
+    PetState.IDLE:        ("试.gif", "gif", 10),    # (文件名, 类型, FPS)
+    PetState.WALKING:     ("试.gif", "gif", 15),
+    PetState.DRAGGING:    ("试.png", "png", 0),
+    PetState.RELEASED:    ("试.gif", "gif", 15),
+    PetState.EATING:     ("试.gif", "gif", 20),
+    PetState.ASKING_FOOD: ("试.gif", "gif", 12),
+    PetState.FEEDING:     ("试.gif", "gif", 20),
+    PetState.SLEEPING:    ("试.gif", "gif", 5),
+    PetState.PLAYING:     ("试.gif", "gif", 15),
+    PetState.ANGRY:       ("试.gif", "gif", 12),
+}
+
+# 物品素材
+ITEM_IMAGE = "试_物品东西.png"
+# 音效素材
+SOUND_FILE = "试.mp3"
+
+
+def _get_image_size(path: str) -> QSize:
+    """通过 QImageReader 获取图片/GIF 原始尺寸（不加载完整文件）"""
+    reader = QImageReader(path)
+    return reader.size()
+
+
+def _scaled_size(original: QSize, target_height: int) -> QSize:
+    """按目标高度等比缩放"""
+    if original.height() <= 0:
+        return QSize(target_height, target_height)
+    ratio = target_height / original.height()
+    return QSize(int(original.width() * ratio), target_height)
 
 
 class PetAnimator(QObject):
-    """宠物动画管理器.
+    """动画管理器
 
-    根据当前状态加载对应目录下的 PNG 帧并按设定 FPS 循环播放。
-    单帧状态（如 DRAGGING）只显示一张静态图片。
+    负责根据状态切换 QLabel 上显示的动画/图片。
+    自动按 PET_HEIGHT 缩放显示尺寸。
     """
 
-    # 动画播放完毕信号（用于触发 ANIMATION_DONE 状态转换）
+    # 动画播放完毕信号（用于单次播放动画结束后通知）
     animation_finished = Signal(PetState)
 
-    def __init__(self, window: "PetWindow") -> None:
-        super().__init__(window)
-        self._window = window
-        self._current_state: PetState | None = None
-        self._frames: list[QPixmap] = []   # 保持引用避免 GC（框架 9.1）
-        self._frame_index = 0
-        self._timer = QTimer(self)
-        self._timer.timeout.connect(self._on_timeout)
-        self._loop = True  # 是否循环播放；非循环播放完毕后发 animation_finished
-
-    @property
-    def current_state(self) -> PetState | None:
-        return self._current_state
-
-    def play(self, state: PetState, loop: bool | None = None) -> None:
-        """切换到指定状态的动画.
-
-        Args:
-            state: 目标状态。
-            loop: 是否循环播放。None 表示按状态自动判断
-                  （单帧状态循环，多帧待机/行走等循环，动画型状态不循环）。
-        """
-        if state == self._current_state and self._frames:
-            return
-
-        frames, fps = self._load_frames(state)
-        self._frames = frames
-        self._frame_index = 0
-        self._current_state = state
-        self._loop = self._decide_loop(state) if loop is None else loop
-
-        if not frames:
-            logger.warning("状态 %s 未加载到任何动画帧", state.name)
-            self._timer.stop()
-            return
-
-        # 显示第一帧
-        self._show_current_frame()
-
-        # 单帧状态：不启动定时器
-        if len(frames) <= 1:
-            self._timer.stop()
-            if not self._loop:
-                self.animation_finished.emit(state)
-            return
-
-        interval = int(1000 / fps) if fps > 0 else 100
-        self._timer.start(interval)
-
-    def stop(self) -> None:
-        """停止动画."""
-        self._timer.stop()
-        self._frames = []
-        self._frame_index = 0
+    def __init__(self, label: QLabel):
+        super().__init__()
+        self._label = label
+        self._movie = None          # QMovie 引用（避免被 GC 回收）
+        self._pixmap = None         # QPixmap 引用（避免被 GC 回收）
         self._current_state = None
+        self._player = None         # 音频播放器
+        self._audio_output = None
 
-    def _decide_loop(self, state: PetState) -> bool:
-        """根据状态决定是否循环播放.
-
-        待机/行走/睡觉等持续状态循环播放；
-        吃东西/喂食/松开等动作型状态播放一次后触发状态转换。
-        """
-        return state in {
-            PetState.IDLE,
-            PetState.WALKING,
-            PetState.SLEEPING,
-            PetState.PLAYING,
-            PetState.ANGRY,
-            PetState.ASKING_FOOD,
-            PetState.DRAGGING,
-        }
-
-    def _load_frames(self, state: PetState) -> tuple[list[QPixmap], int]:
-        """加载指定状态的所有动画帧.
-
-        Returns:
-            (帧列表, 帧率)
-        """
-        expected_count, fps = STATE_ANIMATION_CONFIG.get(state, (0, 10))
-        dir_name = STATE_ASSETS_DIR.get(state, state.name.lower())
-        frames_dir = get_assets_dir(dir_name)
-
-        if not frames_dir.exists():
-            logger.warning("动画帧目录不存在: %s", frames_dir)
-            return [], fps
-
-        # 按文件名排序加载 PNG
-        frame_files = sorted(frames_dir.glob("*.png"))
-        if not frame_files:
-            # 兼容其他常见扩展名
-            frame_files = sorted(
-                p for p in frames_dir.iterdir()
-                if p.suffix.lower() in {".png", ".jpg", ".jpeg", ".gif", ".bmp"}
-            )
-
-        if not frame_files:
-            logger.warning("状态 %s 的动画帧目录为空: %s", state.name, frames_dir)
-            return [], fps
-
-        frames: list[QPixmap] = []
-        for fp in frame_files:
-            pix = QPixmap(str(fp))
-            if pix.isNull():
-                logger.warning("无法加载图片: %s", fp)
-                continue
-            frames.append(pix)
-
-        if expected_count and len(frames) != expected_count:
-            logger.info(
-                "状态 %s 帧数 %d 与预期 %d 不一致",
-                state.name, len(frames), expected_count,
-            )
-
-        return frames, fps
-
-    def _show_current_frame(self) -> None:
-        if not self._frames:
+    def play(self, state: PetState):
+        """根据状态播放对应动画"""
+        if state not in ASSET_MAP:
             return
-        idx = self._frame_index % len(self._frames)
-        self._window.set_pixmap(self._frames[idx])
 
-    def _on_timeout(self) -> None:
-        if not self._frames:
-            return
-        self._frame_index += 1
-        if self._frame_index >= len(self._frames):
-            if self._loop:
-                self._frame_index = 0
-            else:
-                # 非循环动画播放完毕
-                self._timer.stop()
-                state = self._current_state
-                self._frame_index = len(self._frames) - 1
-                self._show_current_frame()
-                if state is not None:
-                    self.animation_finished.emit(state)
-                return
-        self._show_current_frame()
+        filename, file_type, fps = ASSET_MAP[state]
+        asset_path = get_asset_path(filename)
+        self._current_state = state
 
+        if file_type == "gif":
+            self._play_gif(asset_path, fps)
+        elif file_type == "png":
+            self._play_png(asset_path)
 
-__all__ = ["PetAnimator"]
+    def _play_gif(self, path: str, fps: int):
+        """播放 GIF 动画（自动缩放到 PET_HEIGHT）"""
+        # 停止上一个动画
+        if self._movie is not None:
+            self._movie.stop()
+
+        self._movie = QMovie(path)
+        if fps > 0:
+            self._movie.setSpeed(fps * 10)  # QMovie 速度是百分比
+
+        # 获取原始尺寸并缩放
+        original = _get_image_size(path)
+        if original.isValid():
+            scaled = _scaled_size(original, PET_HEIGHT)
+            self._movie.setScaledSize(scaled)
+            self._label.setFixedSize(scaled)
+        else:
+            self._label.setFixedSize(QSize(PET_HEIGHT, PET_HEIGHT))
+
+        self._label.setMovie(self._movie)
+        self._movie.start()
+
+        # 保存引用避免 GC
+        self._pixmap = None
+
+    def _play_png(self, path: str):
+        """显示静态图片（自动缩放到 PET_HEIGHT）"""
+        if self._movie is not None:
+            self._movie.stop()
+            self._label.setMovie(None)
+
+        self._pixmap = QPixmap(path)
+        # 按高度等比缩放
+        original = self._pixmap.size()
+        if original.height() > 0:
+            scaled = _scaled_size(original, PET_HEIGHT)
+            self._pixmap = self._pixmap.scaled(
+                scaled,
+                Qt.AspectRatioMode.KeepAspectRatio,
+                Qt.TransformationMode.SmoothTransformation
+            )
+            self._label.setFixedSize(scaled)
+        else:
+            self._label.setFixedSize(QSize(PET_HEIGHT, PET_HEIGHT))
+
+        self._label.setPixmap(self._pixmap)
+
+    def play_sound(self, filename: str = None):
+        """播放音效"""
+        sound_path = get_asset_path(filename or SOUND_FILE)
+        if self._player is None:
+            self._player = QMediaPlayer()
+            self._audio_output = QAudioOutput()
+            self._player.setAudioOutput(self._audio_output)
+
+        self._player.setSource(QUrl.fromLocalFile(sound_path))
+        self._player.play()
+
+    def get_item_pixmap(self) -> QPixmap:
+        """获取缩放后的物品图片"""
+        path = get_asset_path(ITEM_IMAGE)
+        pixmap = QPixmap(path)
+        original = pixmap.size()
+        if original.height() > 0:
+            scaled = _scaled_size(original, ITEM_HEIGHT)
+            pixmap = pixmap.scaled(
+                scaled,
+                Qt.AspectRatioMode.KeepAspectRatio,
+                Qt.TransformationMode.SmoothTransformation
+            )
+        return pixmap
+
+    def stop(self):
+        """停止当前动画"""
+        if self._movie is not None:
+            self._movie.stop()
