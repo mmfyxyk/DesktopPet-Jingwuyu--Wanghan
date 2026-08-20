@@ -22,6 +22,13 @@ from .douyin import (
     DouyinLoginRequired,
     DouyinVideo,
 )
+from ..download_history import (
+    DownloadRecord,
+    forget_broken_entries,
+    key_for_douyin,
+    lookup as history_lookup,
+    record as history_record,
+)
 
 
 class DouyinLoginWorker(QThread):
@@ -61,7 +68,7 @@ class DouyinLoginWorker(QThread):
     def run(self) -> None:
         driver = None
         try:
-            crawler = DouyinCrawler(headless=self._headless, proxy=self._proxy)
+            crawler = DouyinCrawler(headless=self._headless, proxy=self._proxy, logger=self.log.emit)
             self.log.emit("正在启动浏览器（抖音专用用户资料目录）…")
 
             # 第一步：打开 **前台最大化** 浏览器，跳首页；用户扫码必须看得见页面
@@ -82,11 +89,21 @@ class DouyinLoginWorker(QThread):
                 self.finished_ok.emit()
                 return
 
+            # 主动让二维码/登录面板显形：先处理"同意协议"遮挡 → 点"登录" → 切到"扫码登录"tab
+            self.log.emit("页面打开成功，现在尝试自动让二维码面板出来（若你已经能看到二维码/登录弹窗可忽略本段）…")
+            try:
+                crawler._try_show_login_qr_or_panel(driver)
+            except Exception as e:
+                self.log.emit(f"（非致命）尝试自动弹出登录面板失败：{type(e).__name__}: {e}")
+
             # 未登录 → 通知 UI 弹提示框，让用户在前台 Chrome 里扫码
             self.log.emit("浏览器已打开并跳转到抖音首页，请在浏览器中完成登录（扫码 / 短信）。")
             self._allow = False
             self.user_action_required.emit(
                 "便携版 Chrome 已在前台打开抖音首页（右上角会有登录按钮或二维码弹窗）。\n\n"
+                "程序已自动尝试点「登录」按钮 / 切「扫码登录」；如果你仍看不到二维码：\n"
+                "  · 先勾选/点掉左下角「已阅读并同意用户协议和隐私政策」\n"
+                "  · 再点右上角「登录」→ 左侧或底部选「扫码登录」。\n\n"
                 "操作步骤：\n"
                 "  1. 在弹出的 Chrome 里用抖音 App 扫码登录；如果没弹二维码就点右上角「登录」按钮。\n"
                 "  2. 登录成功后，浏览器右上角会变成你的头像/昵称。\n"
@@ -152,7 +169,17 @@ class DouyinCrawlWorker(QThread):
 
     def run(self) -> None:
         try:
-            crawler = DouyinCrawler(sec_uid=self._sec_uid, proxy=self._proxy)
+            import time as _time
+
+            crawler = DouyinCrawler(sec_uid=self._sec_uid, proxy=self._proxy, logger=self.log.emit)
+
+            # 启动前顺手清一下"历史里有但磁盘上没文件"的死记录，避免命中后打开空文件
+            try:
+                cleaned = forget_broken_entries()
+                if cleaned:
+                    self.log.emit(f"清理了 {cleaned} 条下载历史里指向不存在文件的旧记录")
+            except Exception:
+                pass
 
             # 1) 列作品
             self.log.emit("打开个人主页，获取最新视频列表…")
@@ -160,7 +187,9 @@ class DouyinCrawlWorker(QThread):
             if not videos:
                 self.failed.emit("没获取到任何视频。sec_uid 是否填对？账号是否设为私密？")
                 return
-            self.log.emit(f"共获取到 {len(videos)} 条视频。")
+            self.log.emit(
+                f"✅ 作品列表拿到 {len(videos)} 条。接下来{'下载最新一条 + ffmpeg 合并' if self._download else '不下载，直接出结果'}。"
+            )
 
             # 2) 下载第 1 条（最新一条）
             v = videos[0]
@@ -168,7 +197,20 @@ class DouyinCrawlWorker(QThread):
             self.log.emit(f"播放页：{v.web_url}")
 
             saved_path_or_dir: Optional[str] = None
-            if self._download:
+            final_output: Optional[str] = None
+
+            # —— 重复下载检测：命中 aweme_id 且文件还在 → 直接跳过 yt-dlp ——
+            if v.aweme_id:
+                rec = history_lookup(key_for_douyin(v.aweme_id))
+                if rec is not None:
+                    self.log.emit(
+                        f"⏭️  命中下载历史（aweme_id={v.aweme_id}）：{rec.output_path}"
+                        f"（上次下载时间戳={rec.ts}），跳过本次下载，直接打开已存在文件"
+                    )
+                    saved_path_or_dir = os.path.dirname(rec.output_path)
+                    final_output = rec.output_path
+
+            if self._download and saved_path_or_dir is None:
                 # 缺 yt-dlp 先友好报错，不然直接 subprocess 找不到
                 try:
                     import yt_dlp  # noqa: F401
@@ -183,8 +225,29 @@ class DouyinCrawlWorker(QThread):
                     )
                     return
 
-                self.log.emit("开始调用 yt-dlp 下载（已携带抖音 Cookie）…")
+                # —— 关键：下载阶段一定要明确打 2 条「阶段切换」log，UI 浮层也会随之变文案 ——
+                self.log.emit("✅ 作品已拿到，进入下载阶段（yt-dlp 会实时按行回显进度，不要急）…")
                 saved_path_or_dir = crawler.download_with_ytdlp(v)
+                self.log.emit("✅ 下载结束（可能成功也可能失败，失败会有错误弹窗；半成品会明确列在日志里）")
+
+                # yt-dlp 返回的是 output/douyin/ 成品目录；去找里面的最新视频文件作为最终 output
+                if saved_path_or_dir:
+                    final_output = find_first_file_in_dir(saved_path_or_dir)
+
+            # 写入下载历史（只在真的有文件时写）
+            if final_output and v.aweme_id:
+                try:
+                    history_record(
+                        key_for_douyin(v.aweme_id),
+                        DownloadRecord(
+                            ts=int(_time.time()),
+                            output_path=final_output,
+                            title=v.desc or "",
+                            page_url=v.web_url,
+                        ),
+                    )
+                except Exception as e:
+                    self.log.emit(f"（非致命）写入 download_history.json 失败：{type(e).__name__}: {e}")
 
             # 把下载目录填回 video，方便 UI 高亮
             if saved_path_or_dir:

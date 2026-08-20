@@ -79,7 +79,8 @@ class VideoInfo:
     audio_url: str
     video_url: str
     page_url: str
-    output_path: str  # 最终合并后的文件完整路径（output 下）
+    bvid: str           # 例：BV1xxxxx；做下载历史去重用的唯一 ID
+    output_path: str     # 最终合并后的文件完整路径（output 下）
 
 
 class CrawlerError(Exception):
@@ -144,12 +145,23 @@ class BilibiliCrawler:
 
     # ------------------------------------------------------------------ public
 
-    def run(self, space_url: str = DEFAULT_SPACE_URL) -> VideoInfo:
+    def get_latest_video_url(
+        self,
+        space_url: str = DEFAULT_SPACE_URL,
+    ) -> tuple[str, dict[str, str], tuple[str, str]]:
+        """**只拿最新一条视频页链接**（不下载不合并）。
+
+        返回 (video_page_url, cookies_dict, (wbi_img_key, wbi_sub_key))。
+        - video_page_url 正常形如 https://www.bilibili.com/video/BV1xxx
+        - cookies_dict：浏览器/接口兜底时产出的 cookie（download_video 可以直接复用，免第二次 Selenium）
+        - wbi_keys：给下载侧或后续 API 兜底用；取不到就是 ("", "")
+        """
         self._check_browser_tools()
 
         web = self._open_browser()
         cookies: dict[str, str] = {}
         wbi_img_key = wbi_sub_key = ""
+        video_page_url: Optional[str] = None
         try:
             # --- 取最新视频 URL（策略 1：页面里找 DOM） ---
             video_page_url, extra = self._fetch_latest_video_via_browser(web, space_url)
@@ -175,19 +187,42 @@ class BilibiliCrawler:
         finally:
             web.quit()
 
+        return video_page_url, cookies, (wbi_img_key, wbi_sub_key)
+
+    def download_video(
+        self,
+        video_page_url: str,
+        *,
+        cookies: dict[str, str] | None = None,
+    ) -> VideoInfo:
+        """**下载阶段**：视频页解析 → 分离音视频 → tmp 目录 → ffmpeg 合并到 output/bilibili/"""
         # 后续步骤：视频页解析 → 下载 → ffmpeg 合并
         title, audio_url, video_url = self.get_video_info(video_page_url, cookies=cookies)
         title = self._sanitize_filename(title)
-        self.save_raw(title, audio_url, video_url, video_page_url, cookies=cookies)
-        output_path = self.combine_video(title)
+
+        # bvid 从 page_url 抠（https://www.bilibili.com/video/BV1xxx  里的 BV1xxx），做下载历史去重用
+        import re as _re
+        m = _re.search(r"/video/(BV[0-9A-Za-z]+)", video_page_url or "")
+        bvid = m.group(1) if m else ""
+
+        tmp_dir, audio_path, video_path = self.save_raw(
+            title, audio_url, video_url, video_page_url, cookies=cookies, bvid=bvid
+        )
+        output_path = self.combine_video(title, tmp_dir=tmp_dir, audio_path=audio_path, video_path=video_path)
 
         return VideoInfo(
             title=title,
             audio_url=audio_url,
             video_url=video_url,
             page_url=video_page_url,
+            bvid=bvid,
             output_path=output_path,
         )
+
+    def run(self, space_url: str = DEFAULT_SPACE_URL) -> VideoInfo:
+        """一键跑完整流程（内部仍先拿 URL 再下载；对外部兼容旧签名）。"""
+        video_page_url, cookies, _wbi_keys = self.get_latest_video_url(space_url)
+        return self.download_video(video_page_url, cookies=cookies)
 
     # ------------------------------------------------------------------ 视频链接：策略 1
 
@@ -268,7 +303,14 @@ class BilibiliCrawler:
 
     def _build_session(self, cookies: dict[str, str]) -> requests.Session:
         s = requests.Session()
-        if self.proxy:
+        # proxy 三态：None→跟随系统；""→强制直连；URL→手动
+        if self.proxy is None:
+            pass
+        elif self.proxy == "":
+            s.trust_env = False
+            s.proxies.clear()
+            s.proxies.update({"http": "", "https": ""})
+        else:
             s.proxies.update({"http": self.proxy, "https": self.proxy})
         s.headers.update({
             "User-Agent": USER_AGENT,
@@ -417,10 +459,18 @@ class BilibiliCrawler:
         referer: str,
         *,
         cookies: dict[str, str] | None = None,
-    ) -> None:
-        """下载音视频到 data/ 目录。audio_url 为空时生成一个静音占位 mp3，避免 ffmpeg 崩。"""
-        audio_path = get_data_path(f"{title}.mp3")
-        video_path = get_data_path(f"{title}.mp4")
+        bvid: str = "",
+    ) -> tuple[str, str, str]:
+        """下载音视频到 data/tmp/bilibili/<bvid>/ 目录（与抖音一致）。
+
+        返回 (tmp_dir, audio_path, video_path)。
+        audio_url 为空时生成一个静音占位 mp3，避免 ffmpeg 崩。
+        """
+        from ..resource_manager import get_tmp_path
+        task_id = bvid or title or f"task_{int(time.time()*1000)}"
+        tmp_dir = get_tmp_path("bilibili", task_id)
+        audio_path = os.path.join(tmp_dir, "audio.mp3")
+        video_path = os.path.join(tmp_dir, "video.mp4")
 
         if audio_url:
             audio = self.get_response(audio_url, referer=referer, cookies=cookies).content
@@ -432,6 +482,8 @@ class BilibiliCrawler:
         video = self.get_response(video_url, referer=referer, cookies=cookies).content
         with open(video_path, "wb") as f:
             f.write(video)
+
+        return tmp_dir, audio_path, video_path
 
     @staticmethod
     def _write_silent_mp3(path: str) -> None:
@@ -445,16 +497,22 @@ class BilibiliCrawler:
         with open(path, "wb") as f:
             f.write(silent * 250)
 
-    def combine_video(self, title: str) -> str:
+    def combine_video(self, title: str, *, tmp_dir: str = "", audio_path: str = "", video_path: str = "") -> str:
+        """ffmpeg 合并。成功把成品写 output/bilibili/<title>.mp4；失败 tmp_dir 保留现场。
+
+        调用方一般把 save_raw 返回的 tmp_dir/audio_path/video_path 原样传进来。
+        """
+        if not (audio_path and video_path):
+            raise CrawlerError("combine_video 缺少 audio_path/video_path（save_raw 返回 tuple 要接住）")
+
         if not os.path.isfile(self.ffmpeg_exe):
             raise CrawlerError(
                 f"未找到 ffmpeg：{self.ffmpeg_exe}\n"
                 "请将 ffmpeg.exe 放到 support/ffmpeg/bin/ 下"
             )
 
-        video_path = get_data_path(f"{title}.mp4")
-        audio_path = get_data_path(f"{title}.mp3")
-        output_path = get_output_path(f"{title}.mp4")
+        output_path = get_output_path("bilibili", f"{title}.mp4")
+        os.makedirs(os.path.dirname(output_path), exist_ok=True)
 
         cmd = [
             self.ffmpeg_exe,
@@ -479,11 +537,10 @@ class BilibiliCrawler:
         except FileNotFoundError as e:
             raise CrawlerError(f"无法执行 ffmpeg：{e}") from e
 
-        # 可选：清理分离的临时音视频
-        if os.path.isfile(video_path):
-             os.remove(video_path)
-        if os.path.isfile(audio_path):
-             os.remove(audio_path)
+        # 成功：强制清理临时目录（bilibili 的音频 mp3 + 视频 mp4 分离文件）
+        if tmp_dir:
+            from ..resource_manager import clear_tmp_dir
+            clear_tmp_dir(tmp_dir)
 
         return output_path
 
@@ -513,6 +570,29 @@ class BilibiliCrawler:
         service = Service(self.chromedriver_exe)
         chrome_options.add_experimental_option("excludeSwitches", ["enable-automation"])
         chrome_options.add_experimental_option("useAutomationExtension", False)
+
+        # ✨ 加速 & 降低被"选文字验证"的概率：
+        # 1) eager：DOMContentLoaded 就算 ready，不再等瀑布流图片/视频/推荐/广告全部 onload
+        try:
+            chrome_options.page_load_strategy = "eager"
+        except Exception:
+            pass
+        # 2) 屏蔽 Google/Analytics/DoubleClick 等 3P 域名，减少不必要的 TCP+TLS 握手时间
+        chrome_options.add_argument(
+            "--host-resolver-rules="
+            "MAP *.google-analytics.com 0.0.0.0,"
+            "MAP *.googletagmanager.com 0.0.0.0,"
+            "MAP *.googlesyndication.com 0.0.0.0,"
+            "MAP *.doubleclick.net 0.0.0.0,"
+            "MAP *.gstatic.cn 0.0.0.0,"
+            "MAP adservice.google.com 0.0.0.0"
+        )
+        # 3) 首启动弹窗/同步提示都关掉
+        chrome_options.add_argument("--no-default-browser-check")
+        chrome_options.add_argument("--no-first-run")
+        chrome_options.add_argument("--disable-sync")
+        chrome_options.add_argument("--disable-default-apps")
+
         chrome_options.add_argument("--incognito")
         if self.headless:
             chrome_options.add_argument("--headless=new")
@@ -531,8 +611,12 @@ class BilibiliCrawler:
         chrome_options.add_argument("--disable-features=VizDisplayCompositor")
         chrome_options.add_argument("--disable-ipc-flooding-protection")
         chrome_options.add_argument(f"--user-agent={USER_AGENT}")
-        if self.proxy:
+        # proxy 三态：None=跟随系统；""=强制直连；URL=手动
+        if self.proxy == "":
+            chrome_options.add_argument("--no-proxy-server")
+        elif self.proxy:
             chrome_options.add_argument(f"--proxy-server={self.proxy}")
+            chrome_options.add_argument("--proxy-bypass-list=<-loopback>;127.0.0.1;localhost")
 
         web = webdriver.Chrome(service=service, options=chrome_options)
         web.execute_script(

@@ -6,11 +6,19 @@
 """
 
 import random
+import sys
+import time
 from pathlib import Path
+from typing import Optional
 
-from PySide6.QtCore import Qt, QTimer, QPoint, QUrl
-from PySide6.QtGui import QAction
-from PySide6.QtWidgets import QWidget, QLabel, QMenu, QApplication, QMessageBox
+from PySide6.QtCore import Qt, QTimer, QPoint, QUrl, QPropertyAnimation, QEasingCurve, QThread, Signal, QRect
+from PySide6.QtGui import QAction, QColor, QPainter, QPainterPath, QPen, QBrush, QFont
+from PySide6.QtWidgets import (
+    QWidget, QLabel, QMenu, QApplication, QMessageBox, QDialog, QFormLayout,
+    QVBoxLayout, QHBoxLayout, QRadioButton, QLineEdit, QSpinBox, QComboBox,
+    QDialogButtonBox, QPushButton, QPlainTextEdit, QButtonGroup, QCheckBox,
+    QGraphicsDropShadowEffect,
+)
 from PySide6.QtGui import QDesktopServices
 
 from .pet_state_machine import PetState, StateMachine
@@ -23,6 +31,17 @@ from .crawler.gui_workers import (
     find_first_file_in_dir,
 )
 from .crawler.douyin import DEFAULT_SEC_UID, DouyinCrawler
+from .config import (
+    ProxyConfig,
+    PROXY_JSON,
+    PROXY_MODE_DIRECT,
+    PROXY_MODE_SYSTEM,
+    PROXY_MODE_MANUAL,
+    load_proxy_config,
+    save_proxy_config,
+    resolve_runtime_proxy,
+    clear_proxy_config_file,
+)
 
 
 # ======================== 可调配置 ========================
@@ -52,9 +71,1053 @@ IHAN_URL = "https://ihan.com.cn"
 DOUYIN_USER_HOME = "https://www.douyin.com/user/MS4wLjABAAAALFdBYwOJ_j1XRBnO_qbxPfcDl2OMKGcACPIZ4Glpp1k"
 
 # 爬虫：HTTP 代理，留空 None 表示不走代理。格式如 "http://1.1.1.1:4433"
+# 建议使用 GUI「拓展功能 → 代理设置…」管理。程序启动时会从 data/proxy.json 覆盖本变量。
 CRAWLER_PROXY: str | None = None
 # 爬虫：是否无头模式（True 不弹浏览器窗口，运行快；False 会弹出一个最小化的 Chrome）
 CRAWLER_HEADLESS: bool = False
+
+
+class _FloatingLabel(QLabel):
+    """圆角无边框浮层：notice 短消息（自动关）/ task 长任务（不自动关，手动 hide）。
+
+    设计说明：**故意不启用 WA_TranslucentBackground + 外投影效果**。
+    Windows 分层窗口合成路径在 QLabel + 自绘 paintEvent + 设置透明背景 + 窗口尺寸频繁变化时，
+    容易把脏矩形算错（size 与 dirty 不一致），狂打 `UpdateLayeredWindowIndirect failed ... 参数错误`
+    刷屏日志。这里走普通 TopLevel Tool 窗口 + `setMask` 精确剪圆角 + 自绘背景/边框，
+    不做外阴影，避免触发那条有问题的合成路径。
+
+    新增「不挡二维码」能力：
+      1. anchor 参数允许浮层固定落在屏幕底部中央 / 屏幕右下角（远离 Chrome 正中央的二维码弹窗）。
+      2. task 模式下支持交互：
+           · 左键单击 = 临时隐藏 10s（之后再自动显示同一段文案，不会把爬虫任务状态丢掉）
+           · 双击 = 永久隐藏本任务（任务结束后下一次仍会正常显示）
+           · 右键 = 立即永久隐藏（效果同上双击）
+         不再出现「这个浮层挡着我二维码了，但我关不掉」。
+    """
+
+    def __init__(
+        self,
+        text: str,
+        duration_ms: int = 1500,
+        mode: str = "notice",   # notice / task
+        parent=None,
+        *,
+        anchor: str = "above_pet",   # above_pet / screen_bottom_center / screen_bottom_right
+    ):
+        super().__init__(text, parent)
+        self._mode = mode
+        self._duration_ms = duration_ms
+        self._fade_in_anim: Optional[QPropertyAnimation] = None
+        self._fade_out_anim: Optional[QPropertyAnimation] = None
+        self._dots_timer: Optional[QTimer] = None
+        self._dots = 0
+        self._base_text = text
+        self._radius = 14
+        self._anchor = anchor
+
+        self.setWindowFlags(
+            Qt.FramelessWindowHint |
+            Qt.WindowStaysOnTopHint |
+            Qt.Tool
+        )
+        # —— 关键点：不要 setAttribute(WA_TranslucentBackground) ——
+        self.setAttribute(Qt.WA_NoSystemBackground, False)
+        self.setAttribute(Qt.WA_OpaquePaintEvent, True)
+        self.setAlignment(Qt.AlignLeft | Qt.AlignVCenter)
+        self.setTextInteractionFlags(Qt.NoTextInteraction)
+
+        font = QFont()
+        font.setPointSize(10)
+        self.setFont(font)
+        self.setContentsMargins(18, 0, 18, 0)
+
+        # task 模式：末尾三点点循环动画 + 加一行小字提示「怎么关闭」
+        if mode == "task":
+            self._dots_timer = QTimer(self)
+            self._dots_timer.setInterval(450)
+            self._dots_timer.timeout.connect(self._advance_dots)
+            self._dots_timer.start()
+            self._hide_temp_timer: Optional[QTimer] = None
+            self._permanent_hidden = False
+            self.setCursor(Qt.PointingHandCursor)
+            self._repaint_text()
+            self.setToolTip(
+                "点击 = 隐藏 10 秒\n"
+                "双击 = 本次任务永久隐藏\n"
+                "右键 = 立即永久隐藏"
+            )
+        else:
+            self.setText(text)
+
+        # 淡入（用 windowOpacity 动画；不透明背景一样可以用整体透明度淡入淡出）
+        self.setWindowOpacity(0.0)
+        self._fade_in_anim = QPropertyAnimation(self, b"windowOpacity", self)
+        self._fade_in_anim.setDuration(180)
+        self._fade_in_anim.setStartValue(0.0)
+        self._fade_in_anim.setEndValue(1.0)
+        self._fade_in_anim.setEasingCurve(QEasingCurve.OutCubic)
+        self._fade_in_anim.start()
+
+        # notice 模式：到时自动淡出 + close
+        if mode == "notice" and duration_ms > 0:
+            QTimer.singleShot(max(300, duration_ms), self._begin_fade_out)
+
+    # ---- 尺寸变化时同步圆角剪裁 mask（关键：用 setMask 替代 WA_TranslucentBackground） ----
+
+    def resizeEvent(self, e):
+        super().resizeEvent(e)
+        self._update_mask()
+
+    def _update_mask(self):
+        from PySide6.QtGui import QRegion, QBitmap
+        # 用圆角矩形生成精确 mask，窗口外边缘完全透明（不会看到方角白底）
+        size = self.size()
+        if size.isEmpty():
+            return
+        pm = QBitmap(size)
+        pm.fill(Qt.color0)
+        p = QPainter(pm)
+        p.setRenderHint(QPainter.Antialiasing, True)
+        p.setBrush(Qt.color1)
+        p.setPen(Qt.NoPen)
+        r = min(self._radius, min(size.width(), size.height()) // 2)
+        p.drawRoundedRect(QRect(0, 0, size.width(), size.height()), r, r)
+        p.end()
+        self.setMask(QRegion(pm))
+
+    def setText(self, text: str):   # type: ignore[override]
+        """task 模式下外部调 setText 更新基础文案，并重置三点点。"""
+        if self._mode == "task":
+            self._base_text = text
+            self._dots = 0
+            self._repaint_text()
+        else:
+            super().setText(text)
+
+    def _repaint_text(self):
+        if self._mode == "task":
+            suffix = self._base_text + ("·" * self._dots) + (" " * (3 - self._dots))
+            super().setText(suffix)
+        else:
+            super().setText(self._base_text)
+
+    def _advance_dots(self):
+        self._dots = (self._dots + 1) % 4
+        self._repaint_text()
+
+    # ---- 交互：点击隐藏 / 双击永久隐藏 / 右键永久隐藏 ----
+
+    def mousePressEvent(self, event):
+        if self._mode != "task":
+            return
+        btn = event.button()
+        if btn == Qt.LeftButton:
+            # 双击由 mouseDoubleClickEvent 处理，这里点一下先做临时隐藏
+            self._hide_temporarily(seconds=10)
+        elif btn == Qt.RightButton:
+            self._hide_permanently()
+
+    def mouseDoubleClickEvent(self, event):
+        if self._mode != "task":
+            return
+        if event.button() == Qt.LeftButton:
+            self._hide_permanently()
+
+    def _hide_temporarily(self, seconds: int = 10):
+        """临时隐藏 N 秒（之后自动把浮层重新 show 出来，不丢失任务状态）。
+
+        用户觉得「这一行刚好挡着二维码」但又怕关掉后忘了进度，最常用这种。
+        """
+        try:
+            self._begin_fade_out(and_close=False)
+        except Exception:
+            pass
+        # 延时 N 秒后再淡入显示
+        QTimer.singleShot(max(1, int(seconds)) * 1000, self._reshow_after_temp_hide)
+
+    def _reshow_after_temp_hide(self):
+        if self._permanent_hidden:
+            return
+        try:
+            if hasattr(self, "_fade_in_anim") and self._fade_in_anim is not None:
+                try:
+                    self._fade_in_anim.stop()
+                except Exception:
+                    pass
+            self.setWindowOpacity(0.0)
+            self.show()
+            self.raise_()
+            self._fade_in_anim = QPropertyAnimation(self, b"windowOpacity", self)
+            self._fade_in_anim.setDuration(180)
+            self._fade_in_anim.setStartValue(0.0)
+            self._fade_in_anim.setEndValue(1.0)
+            self._fade_in_anim.setEasingCurve(QEasingCurve.OutCubic)
+            self._fade_in_anim.start()
+        except Exception:
+            pass
+
+    def _hide_permanently(self):
+        """永久隐藏本任务浮层（下一次任务仍会正常创建新的）。"""
+        self._permanent_hidden = True
+        try:
+            self._begin_fade_out(and_close=False)
+        except Exception:
+            pass
+        # 关闭三点点动画，彻底静默（但对象仍活着，外部 setText/hide 不会崩）
+        if self._dots_timer is not None:
+            try:
+                self._dots_timer.stop()
+            except Exception:
+                pass
+
+    # ---- 淡入淡出 & 关闭 ----
+
+    def _begin_fade_out(self, *, and_close: bool = True):
+        if self._fade_out_anim is not None:
+            try:
+                self._fade_out_anim.stop()
+            except Exception:
+                pass
+            self._fade_out_anim = None
+        self._fade_out_anim = QPropertyAnimation(self, b"windowOpacity", self)
+        self._fade_out_anim.setDuration(240)
+        self._fade_out_anim.setStartValue(float(self.windowOpacity()))
+        self._fade_out_anim.setEndValue(0.0)
+        self._fade_out_anim.setEasingCurve(QEasingCurve.InCubic)
+        if and_close:
+            self._fade_out_anim.finished.connect(self.close)
+        self._fade_out_anim.start()
+
+    def closeEvent(self, event):
+        if self._dots_timer is not None:
+            try:
+                self._dots_timer.stop()
+            except Exception:
+                pass
+        super().closeEvent(event)
+
+    def paintEvent(self, ev):
+        """不透明窗口内画圆角背景 + 边框 + 文字（不做外投影，避免 UpdateLayeredWindowIndirect）。"""
+        p = QPainter(self)
+        p.setRenderHint(QPainter.Antialiasing, True)
+        rect = self.rect()
+        r = min(self._radius, min(rect.width(), rect.height()) // 2)
+
+        if self._mode == "notice":
+            bg = QColor(255, 255, 255)
+            border = QColor(205, 208, 215)
+            fg = QColor(30, 30, 30)
+        else:   # task
+            bg = QColor(28, 31, 42)
+            border = QColor(75, 86, 120)
+            fg = QColor(245, 245, 245)
+
+        # 背景
+        path = QPainterPath()
+        path.addRoundedRect(rect, r, r)
+        p.fillPath(path, QBrush(bg))
+        # 边框（内 1px，模拟内阴影外轮廓）
+        pen = QPen(border, 1)
+        p.setPen(pen)
+        p.drawPath(path)
+        # 文字
+        p.setPen(fg)
+        p.setFont(self.font())
+        inner = rect.adjusted(self.contentsMargins().left(), 0,
+                              -self.contentsMargins().right(), 0)
+        p.drawText(inner, int(Qt.AlignLeft | Qt.AlignVCenter), self.text())
+
+
+# ---- 代理测试线程（不阻塞 UI，不会让对话框画面卡一下） ----
+
+class ProxyTestWorker(QThread):
+    """后台 QThread 跑代理连通测试。
+
+    为什么“第一次能用，后来再测觉得慢了好多”？
+      - 旧版是**串行**尝试 3 个目标，每目标 timeout=10s；若前面目标是境外且被当前代理拉黑/绕不出去，
+        就会把整个 10s 等满，你体感就是“整个测试慢了”。
+      - 而且旧版是 `requests.get(整页)`，抖音/B站判定连通性根本不需要拉整页。
+    修复策略：
+      1) 先跑一次 **baseline（直连baidu/阿里 DNS-over-HTTPS）**，测出你本机直连的基准 RTT；
+         如果你没网/系统整体网络抖，baseline 也过不了，就直接告诉你“不是代理的问题”。
+      2) 真正的代理测试，把 3 个目标放在一个 **ThreadPoolExecutor(3)** 里并行做；
+         单个目标 timeout=5s；先试 HEAD（只取响应头），HEAD 不支持（405/未实现）再 GET；
+         任意一个成功（HTTP<400）就立刻判 PASS，让其它未完成线程 cancel 掉，避免你死等 5s*N。
+    """
+
+    line_log = Signal(str)
+    finished_result = Signal(dict)
+
+    def __init__(self, cfg: ProxyConfig, parent=None):
+        super().__init__(parent)
+        self._cfg = cfg
+
+    @staticmethod
+    def _head_then_get(s, url: str, timeout: float):
+        """先 HEAD 省流量+省时间；HEAD 405/301/302 等不友好目标再退化成 GET 只拉很少量数据。
+
+        注解故意不写 `requests.Session / requests.Response`——因为类定义阶段会立刻求值注解，
+        但 requests 是在下面 run() 里才 import 的（写了会 NameError: name 'requests' is not defined）。
+        类型提示读者按 s=requests.Session / 返回值=requests.Response 理解即可。
+        """
+        try:
+            r = s.head(url, timeout=timeout, allow_redirects=True)
+            if r.status_code < 405 or r.status_code == 405:
+                # 405: HEAD 未实现 → 改 GET
+                pass
+            else:
+                return r
+        except Exception:
+            # HEAD 链路不友好（很多代理/CDP 对 HEAD 行为不一致），直接改 GET
+            pass
+        # GET 时设置 stream=True + 只读 1KB，省下载时间
+        r = s.get(url, timeout=timeout, allow_redirects=True, stream=True)
+        try:
+            next(r.iter_content(1024), b"")
+        except Exception:
+            pass
+        finally:
+            try:
+                r.close()
+            except Exception:
+                pass
+        return r
+
+    def _try_one(self, s, name: str, url: str, timeout: float, parser):
+        """单目标一次探测。返回 tuple(ok, name, 结果文本)。
+
+        s 实际是 requests.Session，parser 是 (Response) -> str。这里不写类型注解避免类定义阶段 NameError。
+        """
+        t0 = time.perf_counter()
+        try:
+            r = self._head_then_get(s, url, timeout)
+            r.raise_for_status()
+            dt_ms = int((time.perf_counter() - t0) * 1000)
+            try:
+                extra = parser(r)
+            except Exception:
+                extra = f"HTTP {r.status_code}"
+            return True, name, f"✅ {name} 通过 —— {extra}（RTT≈{dt_ms}ms）"
+        except Exception as e:
+            dt_ms = int((time.perf_counter() - t0) * 1000)
+            msg = f"❌ {name} 失败：{type(e).__name__}: {str(e)[:120]}（耗时≈{dt_ms}ms）"
+            return False, name, msg
+
+    def run(self):
+        import requests
+        import concurrent.futures as _fut
+
+        cfg = self._cfg
+        proxy = cfg.url()
+        self.line_log.emit(f"[模式] {cfg.mode}")
+
+        # Session 行为和爬虫运行时完全一致（闭环）
+        s = requests.Session()
+        proxies = cfg.requests_proxies()
+        if proxies is not None:
+            s.proxies.clear()
+            s.proxies.update(proxies)
+        if proxy == "":
+            s.trust_env = False
+        self.line_log.emit(
+            f"[Session] trust_env={s.trust_env}，proxies={dict(s.proxies)}（仅看类型，脱敏）"
+        )
+
+        # —— Step 0：baseline 直连一次「国内静态资源」（不经过当前 Session，绕过系统/代理），
+        #    用来区分"本机整体没网/运营商抖动"和"当前代理配置真的不行"。
+        baseline_ok = False
+        baseline_ms = -1
+        try:
+            b0 = time.perf_counter()
+            b = requests.Session()
+            b.trust_env = False
+            b.proxies.clear()
+            # 阿里 DoH 返回 JSON 极小，国内快、不受境外影响
+            rb = self._head_then_get(
+                b, "https://223.5.5.5/resolve?name=www.baidu.com&type=A", timeout=3.5,
+                parser=lambda r: "",
+            )
+            rb.raise_for_status()
+            baseline_ms = int((time.perf_counter() - b0) * 1000)
+            baseline_ok = True
+            self.line_log.emit(
+                f"· baseline 本机直连（绕过系统/代理）：✅ 正常（RTT≈{baseline_ms}ms，出口网络没问题）"
+            )
+            try:
+                b.close()
+            except Exception:
+                pass
+        except Exception as e:
+            baseline_ms = int((time.perf_counter() - b0) * 1000) if 'b0' in locals() else -1
+            self.line_log.emit(
+                f"· baseline 本机直连：❌ 异常（{type(e).__name__}: {str(e)[:80]}，耗时≈{baseline_ms}ms）"
+                "\n   👉 这一般不是代理的问题：先检查是否断网、本机防火墙/VPN 是否整体拦截外联。"
+            )
+
+        targets = [
+            ("myip.ipip.net 国内IP+归属地",
+             "https://myip.ipip.net",
+             lambda r: f"出口信息：{(r.text or '').strip()[:80]}"),
+            ("api.ipify.org 境外IP查询",
+             "https://api.ipify.org",
+             lambda r: f"出口 IP：{r.text.strip()[:40]}"),
+            ("www.baidu.com HTTP兜底连通性",
+             "https://www.baidu.com",
+             lambda r: f"HTTP {r.status_code} 链路已通"),
+        ]
+
+        # —— Step 1：并行跑 3 个目标；单个超时 5s；谁先成功就整体 PASS，不等其它慢的
+        self.line_log.emit(
+            f"· 并行探测 {len(targets)} 个目标（单个超时 5s；任意一个通过即判 PASS）…"
+        )
+
+        per_target_timeout = 5.0
+        last_err_msg = ""
+        passed = None
+        log_lines: list[str] = []
+        with _fut.ThreadPoolExecutor(max_workers=len(targets)) as ex:
+            futures = [
+                ex.submit(self._try_one, s, name, url, per_target_timeout, parser)
+                for name, url, parser in targets
+            ]
+            done_remaining = 0
+            try:
+                for fut in _fut.as_completed(futures, timeout=per_target_timeout + 1.0):
+                    done_remaining += 1
+                    ok, name, msg = fut.result()
+                    log_lines.append(msg)
+                    self.line_log.emit(msg)
+                    if ok and passed is None:
+                        passed = (name, msg)
+                        # 立刻取消还没跑完的其它任务（可能慢的就是境外拉黑）
+                        for f in futures:
+                            if not f.done():
+                                f.cancel()
+                        break
+            except _fut.TimeoutError:
+                for f in futures:
+                    if not f.done():
+                        f.cancel()
+                timeout_note = f"⏰ 总等待超过 {per_target_timeout+1:.0f}s，已主动取消剩余探测"
+                log_lines.append(timeout_note)
+                self.line_log.emit(timeout_note)
+                last_err_msg = timeout_note
+
+            # 如果前面提前 break 了，等一小会儿再收日志（被 cancel 的不会 result，忽略即可）
+            remaining_msgs: list[str] = []
+            for fut in futures:
+                if fut.cancelled():
+                    continue
+                if not fut.done():
+                    continue
+                try:
+                    ok, name, msg = fut.result(timeout=0)
+                except Exception:
+                    continue
+                if msg in log_lines:
+                    continue
+                remaining_msgs.append(msg)
+                self.line_log.emit(msg)
+            log_lines.extend(remaining_msgs)
+
+        # 从结果里再取一次"第一个成功"；如果 as_completed break 前已记录就用它
+        if passed is None:
+            for msg in log_lines:
+                if msg.startswith("✅"):
+                    passed = ("目标命中", msg)
+                    break
+
+        try:
+            s.close()
+        except Exception:
+            pass
+
+        if passed is not None:
+            summary = passed[1].lstrip("✅ ")
+            # 把 baseline 信息拼进顶部状态条，让你一眼判断"是不是代理拖慢"
+            if baseline_ok and baseline_ms >= 0:
+                summary = f"✅ {summary} ｜ baseline 直连≈{baseline_ms}ms（本机网正常，代理可用）"
+            else:
+                summary = f"✅ {summary} ｜ baseline 异常，结果仅供参考"
+        else:
+            failed_last = next((ln for ln in reversed(log_lines) if ln.startswith("❌")), "")
+            summary = (
+                "❌ 所有目标均未通过："
+                + (
+                    "大概率是手动代理地址/端口填错、或当前网络被拦截。"
+                    if baseline_ok else
+                    "本机 baseline 直连也失败：先检查本机是否断网/VPN 是否拦截所有外联，再测代理。"
+                )
+            )
+            if failed_last:
+                summary += f"\n最近一次失败：{failed_last}"
+            if last_err_msg:
+                summary += f"\n{last_err_msg}"
+
+        self.finished_result.emit({
+            "ok": passed is not None,
+            "summary": summary,
+            "mode": cfg.mode,
+            "trust_env": s.trust_env,
+            "proxies": dict(s.proxies),
+            "baseline_ok": baseline_ok,
+            "baseline_ms": baseline_ms,
+        })
+
+
+class ProxySettingsDialog(QDialog):
+    """右键菜单「拓展功能 → 代理设置…」弹出的对话框。
+
+    三种模式：
+      1) 跟随系统代理/VPN（默认）
+      2) 强制直连（不通过任何代理）
+      3) 手动配置（host / port / 用户名 / 密码 / 协议类型）
+
+    提供「测试连接」：对多个目标站点依次尝试（国内+境外+兜底），在日志里列出每一步结果，
+    顶部用一条彩色状态条直接给你结论（不用翻密密麻麻日志）。
+    保存时写入 data/proxy.json（gitignore 已忽略）。
+    """
+
+    def __init__(self, parent=None):
+        super().__init__(parent)
+        self.setWindowTitle("代理设置")
+        self.resize(560, 480)
+        self._cfg: ProxyConfig = load_proxy_config()
+        # 后台测试线程引用（防 GC；同时禁止同一配置框里并发）
+        self._test_thread: Optional[ProxyTestWorker] = None
+
+        root = QVBoxLayout(self)
+
+        # ---- 模式选择 ----
+        grp_mode = QButtonGroup(self)
+        self.rb_system = QRadioButton("跟随系统（推荐）")
+        self.rb_system.setToolTip(
+            "把「走不走代理」交给系统决定。\n"
+            "会读取：Windows 系统代理开关 / HTTP(S)_PROXY 环境变量 / 企业 PAC 脚本。\n"
+            "日常用 Chrome 能打开的网站，爬虫也能以同样的网络出口访问。\n"
+            "注：对全局 VPN（虚拟网卡/TUN 模式）无差别，因为是路由表层面劫持。"
+        )
+        self.rb_direct = QRadioButton("强制直连")
+        self.rb_direct.setToolTip(
+            "忽略一切外部代理信号源：Windows 系统代理开关、HTTP_PROXY 环境变量、企业 PAC、Chrome 系统代理设置全部跳过，\n"
+            "直接从本机网卡裸网出去（进程级禁用代理解析）。\n"
+            "适用：开了 Clash/梯子但不想让爬虫绕一圈（B 站/抖音国内直连更稳更快）。\n"
+            "对虚拟网卡级全局 VPN 无效，需要先关掉 VPN。"
+        )
+        self.rb_manual = QRadioButton("手动配置")
+        self.rb_manual.setToolTip(
+            "手动填一个独立代理服务器（HTTP / HTTPS / SOCKS5 / SOCKS5h），与系统代理完全无关。\n"
+            "支持账号密码（勾选「明文存盘」就写进 data/proxy.json，不勾选则仅当前会话生效）。\n"
+            "点「测试连接」可立刻验证出口 IP 是否正确。"
+        )
+        for i, rb in enumerate((self.rb_system, self.rb_direct, self.rb_manual)):
+            grp_mode.addButton(rb, i)
+            root.addWidget(rb)
+
+        # ---- 手动输入行 ----
+        form = QFormLayout()
+        self.ed_host = QLineEdit()
+        self.ed_host.setPlaceholderText("例：127.0.0.1 或 proxy.example.com")
+        self.ed_host.setToolTip("代理服务器地址，填 IP 或域名都行。")
+        self.sp_port = QSpinBox()
+        self.sp_port.setRange(0, 65535)
+        self.sp_port.setSpecialValueText("未填写")
+        self.sp_port.setToolTip("代理端口，通常 Clash 是 7890、常见 SOCKS 是 1080。")
+        self.ed_user = QLineEdit()
+        self.ed_user.setPlaceholderText("可留空")
+        self.ed_user.setToolTip("仅当代理服务器需要 Basic 认证时填写。")
+        self.ed_pass = QLineEdit()
+        self.ed_pass.setEchoMode(QLineEdit.Password)
+        self.ed_pass.setPlaceholderText("可留空")
+        self.ed_pass.setToolTip("认证密码。勾选下方的明文存盘开关决定是否写入磁盘。")
+        self.cb_scheme = QComboBox()
+        self.cb_scheme.addItems(["http", "https", "socks5", "socks5h"])
+        self.cb_scheme.setToolTip(
+            "http/https：最常用，绝大多数 HTTP/HTTPS 代理都选它。\n"
+            "socks5：标准 SOCKS5（目标域名由本机 DNS 解析后再告诉代理）。\n"
+            "socks5h：推荐给远程 SOCKS5 —— 目标域名也交给代理 DNS 解析，绕过本地 DNS 污染。"
+        )
+        self.cb_savepass = QCheckBox("明文存盘（账号密码写入 data/proxy.json）")
+        self.cb_savepass.setToolTip(
+            "勾选：保存后下次打开程序不用再输入账号密码（风险：proxy.json 文件是可读的明文）。\n"
+            "不勾选：仅本次运行的会话期间生效，关闭程序即丢失。"
+        )
+        self.cb_savepass.setChecked(True)
+
+        form.addRow("代理协议", self.cb_scheme)
+        form.addRow("服务器 Host", self.ed_host)
+        form.addRow("端口 Port", self.sp_port)
+        form.addRow("用户名", self.ed_user)
+        form.addRow("密码", self.ed_pass)
+        form.addRow("", self.cb_savepass)
+        form_box = QWidget()
+        form_box.setLayout(form)
+        root.addWidget(form_box)
+
+        def update_enable():
+            manual = self.rb_manual.isChecked()
+            form_box.setEnabled(manual)
+        self.rb_manual.toggled.connect(update_enable)
+
+        # ---- 顶部状态条（每次测试刷新） ----
+        self.lbl_status = QLabel("尚未测试：点「测试连接」可立刻检查当前配置是否可用")
+        self.lbl_status.setContentsMargins(12, 10, 12, 10)
+        self._apply_status_style("gray")
+        root.addWidget(self.lbl_status)
+
+        # ---- 测试按钮区 ----
+        row = QHBoxLayout()
+        self.btn_help = QPushButton("? 三种模式区别")
+        self.btn_help.setMaximumWidth(140)
+        self.btn_help.clicked.connect(self._on_show_help)
+        self.btn_test = QPushButton("测试连接")
+        self.btn_test.setToolTip("依次尝试多个目标站点（境外/国内/兜底），有一个通过就判定当前配置可用。")
+        self.btn_test.clicked.connect(self._on_test)
+        row.addWidget(self.btn_help)
+        row.addWidget(self.btn_test)
+        row.addStretch(1)
+        root.addLayout(row)
+
+        self.txt_log = QPlainTextEdit()
+        self.txt_log.setReadOnly(True)
+        self.txt_log.setPlaceholderText(
+            "点「测试连接」后会显示每一步的尝试记录（仅保留本次结果，不会一段一段往下加）。"
+        )
+        root.addWidget(self.txt_log, 1)
+
+        # ---- 底部按钮 ----
+        row_bottom = QHBoxLayout()
+        self.btn_clear_proxy = QPushButton("清除代理配置文件")
+        self.btn_clear_proxy.setToolTip("删除 data/proxy.json（里面可能包含账号密码明文），恢复默认跟随系统。")
+        self.btn_clear_proxy.clicked.connect(self._on_clear_proxy_file)
+        row_bottom.addWidget(self.btn_clear_proxy)
+        row_bottom.addStretch(1)
+        root.addLayout(row_bottom)
+
+        bb = QDialogButtonBox(QDialogButtonBox.Save | QDialogButtonBox.Cancel | QDialogButtonBox.Reset, self)
+        bb.button(QDialogButtonBox.Save).setText("保存并应用")
+        bb.button(QDialogButtonBox.Cancel).setText("取消")
+        bb.button(QDialogButtonBox.Reset).setText("恢复默认（跟随系统）")
+        bb.accepted.connect(self._on_save)
+        bb.rejected.connect(self.reject)
+        bb.button(QDialogButtonBox.Reset).clicked.connect(self._on_reset)
+        root.addWidget(bb)
+
+        # 用当前 cfg 回填 UI
+        self._fill_from_cfg()
+        update_enable()
+
+    def _apply_status_style(self, color: str):
+        """color: gray(未测)/green(ok)/red(failed)/blue(running)"""
+        bg = {
+            "gray":  "#F1F3F5",
+            "green": "#E7F8EE",
+            "red":   "#FDECEA",
+            "blue":  "#EAF1FD",
+        }[color]
+        fg = {
+            "gray":  "#4D5159",
+            "green": "#1E7F49",
+            "red":   "#B42318",
+            "blue":  "#1D4ED8",
+        }[color]
+        border = {
+            "gray":  "#D0D5DD",
+            "green": "#A5E0BA",
+            "red":   "#F4B4AB",
+            "blue":  "#B7CDF7",
+        }[color]
+        self.lbl_status.setStyleSheet(
+            f"color: {fg};"
+            f"background-color: {bg};"
+            f"border: 1px solid {border};"
+            "border-radius: 8px;"
+            "font-size: 13px;"
+        )
+
+    # ---- UI <-> cfg ----
+
+    def _fill_from_cfg(self):
+        mode = self._cfg.mode
+        if mode == PROXY_MODE_DIRECT:
+            self.rb_direct.setChecked(True)
+        elif mode == PROXY_MODE_MANUAL:
+            self.rb_manual.setChecked(True)
+        else:
+            self.rb_system.setChecked(True)
+        self.ed_host.setText(self._cfg.host)
+        self.sp_port.setValue(self._cfg.port or 0)
+        self.ed_user.setText(self._cfg.username)
+        self.ed_pass.setText(self._cfg.password)
+        idx = self.cb_scheme.findText(self._cfg.scheme)
+        if idx >= 0:
+            self.cb_scheme.setCurrentIndex(idx)
+
+    def _collect_cfg(self) -> ProxyConfig:
+        cfg = ProxyConfig(
+            mode=(
+                PROXY_MODE_MANUAL if self.rb_manual.isChecked()
+                else PROXY_MODE_DIRECT if self.rb_direct.isChecked()
+                else PROXY_MODE_SYSTEM
+            ),
+            host=self.ed_host.text().strip(),
+            port=int(self.sp_port.value()),
+            username=self.ed_user.text().strip(),
+            password=self.ed_pass.text() if self.cb_savepass.isChecked() else "",
+        )
+        cfg.extras["scheme"] = self.cb_scheme.currentText()
+        return cfg
+
+    # ---- 按钮 ----
+
+    def _on_reset(self):
+        self._cfg = ProxyConfig()  # 默认 system
+        self._fill_from_cfg()
+        self.txt_log.clear()
+        self._apply_status_style("gray")
+        self.lbl_status.setText("已恢复默认「跟随系统」，如需验证可以点测试连接")
+
+    def _on_show_help(self):
+        text = (
+            "代理模式的选择，只影响「爬虫相关的出口（B 站/抖音爬取 + yt-dlp 下载）」，\n"
+            "不影响桌面宠物动画、行走、投喂这些本地功能。\n\n"
+            "三种模式的真正区别，在于「是否响应下面这些外部代理信号源」：\n\n"
+            "  1. Windows 系统代理开关（Clash/v2rayN 的「系统代理」按钮就是改这个注册表项）\n"
+            "  2. HTTP_PROXY / HTTPS_PROXY / ALL_PROXY 环境变量\n"
+            "  3. 企业 PAC / WPAD 自动检测脚本\n"
+            "  4. yt-dlp 的全局配置文件 %APPDATA%\\yt-dlp\\config\n\n"
+            "─────────────────────────────\n"
+            "◆ 跟随系统（推荐，95% 场景）\n"
+            "   响应上面 1~4 所有信号源。\n"
+            "   爬虫表现和你默认 Chrome/Edge 浏览器一模一样。\n"
+            "   你日常浏览器能打开什么站，爬虫就能打开什么站。\n\n"
+            "◆ 强制直连\n"
+            "   忽略上面 1~4 所有信号源：进程级禁用代理解析，本机 DNS → 本机 TCP 直接出去。\n"
+            "   适用场景：Clash 开着系统代理，但我爬 B 站/抖音就想走国内直连，更快更稳。\n"
+            "   ❗ 对「全局 VPN（虚拟网卡/TUN 模式）」无效，因为 VPN 是在 Windows 路由表层面劫持流量，进程没有能力绕过。想彻底直连先关 VPN。\n\n"
+            "◆ 手动配置\n"
+            "   完全忽略上面 1~4，固定走你填的代理服务器。\n"
+            "   常用协议：http（绝大多数代理）/ socks5h（远程 SOCKS5，推荐，连 DNS 解析也交给代理避开本地 DNS 污染）。\n"
+            "   点「测试连接」可立刻验证出口 IP 是不是你期望的代理出口。\n\n"
+            "─────────────────────────────\n"
+            "如果你不知道选什么 → 保持默认「跟随系统」即可。\n"
+            "隐私提示：手动模式里的账号密码，勾选明文存盘会写入 data/proxy.json，\n"
+            "            不想写盘就取消勾选（仅本次会话生效，关掉程序即丢）；\n"
+            "            随时可以点本对话框底部的「清除代理配置文件」一键删掉该文件。\n"
+        )
+        box = QMessageBox(self)
+        box.setWindowTitle("代理三种模式 · 详细说明")
+        box.setText(text)
+        box.setIcon(QMessageBox.Information)
+        box.exec()
+
+    def _on_clear_proxy_file(self):
+        """删除 data/proxy.json 并恢复默认，同时让外部应用立刻生效。"""
+        from .config import PROXY_JSON
+        import os
+        if not os.path.isfile(PROXY_JSON):
+            QMessageBox.information(
+                self,
+                "清除完成",
+                f"{PROXY_JSON}\n本来就不存在（从未手动保存过 / 已经清除过）。",
+            )
+            # 界面依然恢复默认，避免 UI 和内存态不一致
+            self._cfg = ProxyConfig()
+            self._fill_from_cfg()
+            return
+
+        box = QMessageBox(self)
+        box.setWindowTitle("确认清除代理配置文件")
+        box.setIcon(QMessageBox.Warning)
+        box.setText(
+            f"即将删除以下文件（里面可能包含明文写的代理账号密码）：\n\n"
+            f"  {PROXY_JSON}\n\n"
+            f"删除后程序立刻恢复默认「跟随系统」。确定删除吗？"
+        )
+        box.setStandardButtons(QMessageBox.Yes | QMessageBox.Cancel)
+        box.button(QMessageBox.Yes).setText("确认删除")
+        box.button(QMessageBox.Cancel).setText("取消")
+        if box.exec() != QMessageBox.Yes:
+            return
+        try:
+            os.remove(PROXY_JSON)
+        except OSError as e:
+            QMessageBox.warning(self, "删除失败", f"{type(e).__name__}: {e}")
+            return
+
+        # 恢复默认并同步运行时 CRAWLER_PROXY
+        self._cfg = ProxyConfig()
+        self._fill_from_cfg()
+        global CRAWLER_PROXY
+        CRAWLER_PROXY = resolve_runtime_proxy(self._cfg)
+
+        QMessageBox.information(
+            self,
+            "清除完成",
+            f"已删除 {PROXY_JSON}\n当前已恢复默认：跟随系统代理 / VPN。",
+        )
+
+    def _on_test(self):
+        """代理连接测试 — 后台 QThread 跑，不卡对话框画面；每次点测试清空日志，只保留本次结果。
+
+        顶部 status bar 给你一行大结论（✅/❌），下面 txt_log 列每个目标的尝试记录。
+        """
+        # 上次还在跑？不允许并发，按钮点了直接忽略
+        if self._test_thread is not None and self._test_thread.isRunning():
+            return
+
+        cfg = self._collect_cfg()
+        # 手动模式下 host+port 为空 → 直接提示，不启动线程（省时间+省日志噪音）
+        if cfg.mode == PROXY_MODE_MANUAL and (not cfg.host or cfg.port <= 0):
+            self.txt_log.clear()
+            self._apply_status_style("red")
+            self.lbl_status.setText("❌ 手动模式需要先填 Host 和 Port 才能测试")
+            self.txt_log.appendPlainText(
+                "[错误] 手动模式下 Host/Port 必填。先在上面的表单里填好，再点测试。"
+            )
+            return
+
+        # 每次点先清空，不要一段一段往下加
+        self.txt_log.clear()
+        self.btn_test.setEnabled(False)
+        self.btn_test.setText("测试中…")
+        self._apply_status_style("blue")
+        self.lbl_status.setText("🔵 测试中：依次尝试多个目标站点，耗时最长 30s…")
+        # 立即让 UI 画出来，避免用户看到"按钮还没灰就卡一下"
+        QApplication.processEvents()
+
+        w = ProxyTestWorker(cfg, self)
+        self._test_thread = w
+
+        w.line_log.connect(lambda line: self.txt_log.appendPlainText(line))
+
+        def on_result(res: dict):
+            self.btn_test.setEnabled(True)
+            self.btn_test.setText("测试连接")
+            ok = bool(res["ok"])
+            self._apply_status_style("green" if ok else "red")
+            self.lbl_status.setText(res["summary"])
+            # 日志底部追加一行总结，方便复制给我查问题
+            self.txt_log.appendPlainText("")
+            self.txt_log.appendPlainText("—" * 32)
+            self.txt_log.appendPlainText(
+                "总结：" + res["summary"]
+            )
+
+        w.finished_result.connect(on_result)
+        w.start()
+
+    def _on_save(self):
+        cfg = self._collect_cfg()
+        # 校验：manual 模式下必填 host + port
+        if cfg.mode == PROXY_MODE_MANUAL and (not cfg.host or cfg.port <= 0):
+            QMessageBox.warning(
+                self,
+                "手动配置缺失",
+                "选择「手动配置代理」后，Host 和 Port 必须填写。\n"
+                "不确定的话选「跟随系统代理 / 系统 VPN」即可。",
+            )
+            return
+        saved_path = save_proxy_config(cfg)
+        # 同步运行时变量
+        global CRAWLER_PROXY
+        CRAWLER_PROXY = resolve_runtime_proxy(cfg)
+        QMessageBox.information(
+            self,
+            "保存成功",
+            f"代理配置已保存到：{saved_path}\n\n"
+            f"当前生效：{self._describe(cfg)}\n\n"
+            "下一次启动爬虫任务（B 站 / 抖音）会立刻采用这个配置。",
+        )
+        self.accept()
+
+    @staticmethod
+    def _describe(cfg: ProxyConfig) -> str:
+        if cfg.mode == PROXY_MODE_SYSTEM:
+            return "跟随系统代理 / 系统 VPN"
+        if cfg.mode == PROXY_MODE_DIRECT:
+            return "强制直连（不通过任何代理）"
+        auth = "带认证" if cfg.username else "无认证"
+        return f"手动 {cfg.scheme}://{cfg.host}:{cfg.port} ({auth})"
+
+
+class ClearPrivacyDialog(QDialog):
+    """拓展功能 → 清除隐私数据 …
+
+    可勾选 4 类本地隐私文件：
+      A) 代理配置 data/proxy.json（可能含明文账号密码）
+      B~D) 抖音登录态 3 处（Profile-Douyin 目录 / json / txt）
+
+    每一项带路径说明；点确认后会显示"成功删除 / 本来就不存在 / 删除失败"三条汇总。
+    """
+
+    class Item:
+        __slots__ = ("key", "title", "desc", "path")
+
+        def __init__(self, key, title, desc, path):
+            self.key = key
+            self.title = title
+            self.desc = desc
+            self.path = path
+
+    def __init__(self, parent=None):
+        super().__init__(parent)
+        self.setWindowTitle("清除本地隐私数据")
+        self.resize(560, 460)
+
+        # 先把 4 项路径准备好
+        dc = DouyinCrawler()
+        locs = dc.login_data_locations()
+        self._items: list[ClearPrivacyDialog.Item] = [
+            ClearPrivacyDialog.Item(
+                "proxy_json",
+                "代理配置文件 data/proxy.json",
+                "手动模式下写入的 Host / Port / 账号 / 密码（若勾选了明文存盘）",
+                PROXY_JSON,
+            ),
+            ClearPrivacyDialog.Item(
+                "douyin_cookie_json",
+                "抖音 Cookie JSON",
+                DouyinCrawler.LOGIN_LOCATIONS_DESC["cookies_json"],
+                locs["cookies_json"],
+            ),
+            ClearPrivacyDialog.Item(
+                "douyin_cookie_txt",
+                "抖音 Cookie TXT（yt-dlp 用）",
+                DouyinCrawler.LOGIN_LOCATIONS_DESC["cookies_netscape"],
+                locs["cookies_netscape"],
+            ),
+            ClearPrivacyDialog.Item(
+                "douyin_profile_dir",
+                "抖音 Chrome 独立用户资料目录",
+                DouyinCrawler.LOGIN_LOCATIONS_DESC["chrome_profile_dir"],
+                locs["chrome_profile_dir"],
+            ),
+        ]
+        root = QVBoxLayout(self)
+        lab = QLabel(
+            "勾选要删除的本地隐私文件（删除后不可恢复）：\n"
+            "说明：这些文件都会被 .gitignore 忽略，不会提交到 Git 仓库。\n"
+            "如果打算把项目发给别人/或者准备公开打包，建议在此一键清干净再操作。"
+        )
+        lab.setWordWrap(True)
+        root.addWidget(lab)
+
+        self._cbs: dict[str, QCheckBox] = {}
+        for it in self._items:
+            cb = QCheckBox()
+            import os
+            exist = os.path.exists(it.path)
+            suffix = "  （当前不存在）" if not exist else ""
+            cb.setText(f"☐  {it.title}{suffix}")
+            cb.setToolTip(f"{it.desc}\n路径：{it.path}")
+            cb.setChecked(True if exist else False)
+            self._cbs[it.key] = cb
+            root.addWidget(cb)
+
+        # 额外备注
+        note = QLabel(
+            "⚠️  删除抖音 Chrome 用户资料目录前，请先关闭由本程序启动的 Chrome 窗口，\n"
+            "       否则文件被占用时会跳过该项并在汇总里提示。"
+        )
+        note.setStyleSheet("color:#a55;")
+        note.setWordWrap(True)
+        root.addWidget(note)
+
+        root.addStretch(1)
+
+        # 按钮
+        bb = QDialogButtonBox(QDialogButtonBox.Ok | QDialogButtonBox.Cancel, self)
+        bb.button(QDialogButtonBox.Ok).setText("清除已勾选项")
+        bb.button(QDialogButtonBox.Cancel).setText("取消")
+        bb.accepted.connect(self._on_confirm)
+        bb.rejected.connect(self.reject)
+        root.addWidget(bb)
+
+    def _on_confirm(self):
+        picked_keys = [k for k, cb in self._cbs.items() if cb.isChecked()]
+        if not picked_keys:
+            QMessageBox.information(self, "未勾选", "请至少勾选一项要删除的内容。")
+            return
+        box = QMessageBox(self)
+        box.setIcon(QMessageBox.Warning)
+        box.setWindowTitle("二次确认")
+        lines = ["确认删除以下勾选的本地隐私内容吗？删除后不可恢复：\n"]
+        for it in self._items:
+            if it.key in picked_keys:
+                lines.append(f"  · {it.title}")
+                lines.append(f"      路径: {it.path}")
+        lines.append("\n提示：抖音登录态删除后，下次使用抖音爬虫前需要重新扫码登录。")
+        box.setText("\n".join(lines))
+        box.setStandardButtons(QMessageBox.Yes | QMessageBox.Cancel)
+        box.button(QMessageBox.Yes).setText("确认删除")
+        box.button(QMessageBox.Cancel).setText("取消")
+        if box.exec() != QMessageBox.Yes:
+            return
+
+        # 执行删除
+        import os
+        ok, skipped, failed = [], [], []
+        dc = DouyinCrawler()
+
+        if "proxy_json" in picked_keys:
+            if clear_proxy_config_file():
+                ok.append(f"[代理配置] {PROXY_JSON}")
+            else:
+                failed.append(f"[代理配置] 删不掉 {PROXY_JSON}（可能被占用）")
+        # 抖音 3 处：直接复用 DouyinCrawler.clear_login_data 但只删选中的
+        if "douyin_profile_dir" in picked_keys or "douyin_cookie_json" in picked_keys or "douyin_cookie_txt" in picked_keys:
+            # clear_login_data 是"全删"三选三的；为了只删勾选，这里拆开来删
+            import shutil
+            if "douyin_profile_dir" in picked_keys:
+                d = dc.login_data_locations()["chrome_profile_dir"]
+                if os.path.isdir(d):
+                    try:
+                        shutil.rmtree(d)
+                        ok.append(f"[抖音Profile] {d}")
+                    except OSError:
+                        failed.append(f"[抖音Profile] {d} —— 删除失败（Chrome 还在占用？请先关闭窗口）")
+                else:
+                    skipped.append(f"[抖音Profile] {d} —— 本来就不存在")
+            for pick_key, attr in (
+                ("douyin_cookie_json", "cookies_json"),
+                ("douyin_cookie_txt", "cookies_netscape"),
+            ):
+                if pick_key in picked_keys:
+                    f = dc.login_data_locations()[attr]
+                    if os.path.isfile(f):
+                        try:
+                            os.remove(f)
+                            ok.append(f"[{attr}] {f}")
+                        except OSError as e:
+                            failed.append(f"[{attr}] {f} —— {type(e).__name__}: {e}")
+                    else:
+                        skipped.append(f"[{attr}] {f} —— 本来就不存在")
+
+        # 让 PetWindow 立刻同步 CRAWLER_PROXY（避免还挂着老的手动代理）
+        global CRAWLER_PROXY
+        if "proxy_json" in picked_keys:
+            CRAWLER_PROXY = resolve_runtime_proxy(load_proxy_config())
+
+        # 汇总
+        parts = []
+        if ok:
+            parts.append("✅ 成功删除：\n" + "\n".join("  " + x for x in ok))
+        if skipped:
+            parts.append("ℹ️  本来就不存在（跳过）：\n" + "\n".join("  " + x for x in skipped))
+        if failed:
+            parts.append("❌ 失败：\n" + "\n".join("  " + x for x in failed))
+        if not parts:
+            parts.append("没有什么可删除的（勾选项都已不存在）。")
+        msg_box = QMessageBox(self)
+        msg_box.setWindowTitle("清除结果汇总")
+        msg_box.setIcon(QMessageBox.Information if not failed else QMessageBox.Warning)
+        msg_box.setText("\n\n".join(parts))
+        msg_box.exec()
+
+        # 有成功删除 → 关闭对话框；只有跳过或失败 → 不关让用户再选
+        if ok:
+            self.accept()
 
 
 class PetWindow(QWidget):
@@ -62,6 +1125,11 @@ class PetWindow(QWidget):
 
     def __init__(self):
         super().__init__()
+
+        # 启动时从 data/proxy.json 加载代理配置
+        proxy_cfg = load_proxy_config()
+        global CRAWLER_PROXY
+        CRAWLER_PROXY = resolve_runtime_proxy(proxy_cfg)
 
         # 窗口设置：无边框、透明背景、置顶
         self.setWindowFlags(
@@ -102,6 +1170,15 @@ class PetWindow(QWidget):
         # 爬虫后台线程（一次只允许一个跑；保存引用防止 GC）
         self._crawler_worker: CrawlerWorker | DouyinLoginWorker | DouyinCrawlWorker | None = None
 
+        # 非模态浮层（内置 QLabel，避免独立 Popup 留屏、叠层、GC 不及时导致的残留遮罩）
+        # _floating_notice:  1.2s 自动消失的短提示（替代原来的 QMessageBox Popup）
+        # _task_overlay:     爬虫等长任务时"停在宠物上方不动"的进度浮层，任务未完成时持续显示文案
+        self._floating_notice: Optional[_FloatingLabel] = None
+        self._task_overlay: Optional[_FloatingLabel] = None
+        # 当前长任务浮层的"锚点偏好"——任务入口先改这里，之后 _on_crawler_log 每次更新文案
+        # 时不传 anchor，就会沿用这个锚点，不会出现「入口放右下角，日志一更新又回到宠物头顶」
+        self._task_overlay_anchor: str = "above_pet"
+
         # 初始化
         self._init_ui()
         self._start_idle()
@@ -120,6 +1197,128 @@ class PetWindow(QWidget):
         x = screen.width() // 2 - self.width() // 2
         y = screen.height() - self.height() - 50
         self.move(x, y)
+
+    # ---------- 浮层：短通知 / 长任务遮罩 ----------
+
+    def _floating_geometry(
+        self,
+        above: bool = True,
+        width: int = 380,
+        *,
+        anchor: str = "above_pet",   # above_pet / screen_bottom_center / screen_bottom_right
+        height: int = 44,
+    ) -> tuple[int, int, int, int]:
+        """计算浮层在屏幕上的位置。
+
+        - `above_pet`: 在宠物上方 / 下方（老行为）
+        - `screen_bottom_center`: 屏幕可用区域底部居中（不跟随宠物，不挡 Chrome 正中央二维码）
+        - `screen_bottom_right`: 屏幕右下角（最安全，距离 Chrome 弹窗最远；抖音登录/扫码建议用这个）
+        """
+        screen = QApplication.primaryScreen().availableGeometry()
+        self_w = self.width()
+        self_x = self.x()
+        self_y = self.y()
+        # 浮层宽度 minimum 380，最大不超过屏幕 80%
+        width = max(300, min(width, int(screen.width() * 0.8)))
+
+        if anchor == "screen_bottom_center":
+            x = screen.left() + (screen.width() - width) // 2
+            y = screen.bottom() - height - 18
+            return x, y, width, height
+        if anchor == "screen_bottom_right":
+            x = screen.right() - width - 18
+            y = screen.bottom() - height - 18
+            return x, y, width, height
+
+        # 原行为：跟随宠物
+        x = self_x + (self_w - width) // 2
+        # 贴边保护
+        x = max(screen.left() + 16, min(screen.right() - width - 16, x))
+        if above:
+            y = self_y - 54            # 宠物顶部上面一点点的位置
+            # 如果太靠顶部放不下，就放下面
+            if y - 16 < screen.top():
+                y = self_y + self.height() + 10
+        else:
+            y = self_y + self.height() + 10
+        return x, y, width, 44
+
+    def _show_notice(self, text: str, duration_ms: int = 1500):
+        """1~2 秒自动关闭的轻提示（内置 QLabel，非模态不阻塞事件循环）。"""
+        if self._floating_notice is not None:
+            try:
+                self._floating_notice.close()
+            except Exception:
+                pass
+            self._floating_notice = None
+        lb = _FloatingLabel(text, duration_ms=duration_ms, mode="notice", parent=None)
+        lb.setAttribute(Qt.WA_DeleteOnClose, True)
+        x, y, w, h = self._floating_geometry(above=True)
+        lb.move(x, y - 10)          # notice 在 task_overlay 上面一点点（不叠一起）
+        lb.resize(w, h)
+        lb.show()
+        self._floating_notice = lb
+
+    def _task_overlay_show(
+        self,
+        text: str,
+        *,
+        anchor: str | None = None,   # None=沿用当前任务锚点；显式传值则会把任务锚点一起更新
+    ):
+        """长任务进行中的持久浮层：任务未完成时一直显示；调用者负责 hide。
+
+        - 普通爬虫任务默认 `above_pet`：跟随宠物（原行为）。
+        - 抖音登录/扫码等「会弹 Chrome 二维码窗口」的阶段：传 `screen_bottom_right`，
+          让浮层固定落在屏幕右下角，不会挡住 Chrome 正中央的二维码。
+
+        每次调用会**覆盖文案**（用于登录中、下载中等阶段提示，不会叠层）。
+        若调用者改了 `anchor`，且旧浮层 anchor 不同，会自动重建一个新窗口贴过去。
+        """
+        # anchor 不传就沿用当前任务锚点；传了就把任务锚点一起更新（供后续 _on_crawler_log 使用）
+        if anchor is None:
+            anchor = self._task_overlay_anchor
+        else:
+            self._task_overlay_anchor = anchor
+        x, y, w, h = self._floating_geometry(above=True, anchor=anchor)
+        need_rebuild = (
+            self._task_overlay is None
+            or not self._task_overlay.isVisible()
+            or getattr(self._task_overlay, "_anchor", None) != anchor
+        )
+        if need_rebuild:
+            try:
+                if self._task_overlay is not None:
+                    self._task_overlay.close()
+            except Exception:
+                pass
+            lb = _FloatingLabel(text, duration_ms=-1, mode="task", parent=None, anchor=anchor)
+            lb.setAttribute(Qt.WA_DeleteOnClose, False)
+            lb.move(x, y)
+            lb.resize(w, h)
+            lb.show()
+            self._task_overlay = lb
+        else:
+            self._task_overlay.setText(text)
+            self._task_overlay.move(x, y)
+            self._task_overlay.resize(w, h)
+            # 被用户临时/永久隐藏过的浮层，外部更新文案时强制再 show 一下，避免它静默
+            if not getattr(self._task_overlay, "_permanent_hidden", False):
+                try:
+                    self._task_overlay.setWindowOpacity(1.0)
+                    self._task_overlay.show()
+                    self._task_overlay.raise_()
+                except Exception:
+                    pass
+
+    def _task_overlay_hide(self):
+        if self._task_overlay is not None:
+            try:
+                self._task_overlay.close()
+            except Exception:
+                pass
+            self._task_overlay = None
+        # 任务结束把锚点复位，避免下一个普通任务意外沿用了「右下角」
+        self._task_overlay_anchor = "above_pet"
 
     # ======================== 状态管理 ========================
 
@@ -235,6 +1434,32 @@ class PetWindow(QWidget):
         douyin_menu.addAction(action_douyin_login)
         douyin_menu.addAction(action_douyin_logout)
 
+        extras_menu.addSeparator()
+
+        action_proxy_settings = QAction("代理设置…", self)
+        extras_menu.addAction(action_proxy_settings)
+
+        action_clear_privacy = QAction("清除隐私数据…", self)
+        action_clear_privacy.setToolTip("一键选择删除本地代理配置 / 抖音 Cookie / 抖音 Chrome 用户资料目录等隐私文件")
+        extras_menu.addAction(action_clear_privacy)
+
+        extras_menu.addSeparator()
+
+        action_open_data_dir = QAction("打开 data 目录", self)
+        action_open_data_dir.setToolTip(
+            "打开程序运行时数据根目录（打包 exe 后与 exe 同级目录下的 data）。\n"
+            "里面放有：下载历史 download_history.json、抖音登录数据、以及临时/缓存文件。\n"
+            "——爬虫失败时可来此查看 data/tmp 下保留的现场。"
+        )
+        extras_menu.addAction(action_open_data_dir)
+
+        action_open_output_dir = QAction("打开 output 目录", self)
+        action_open_output_dir.setToolTip(
+            "打开最终成品输出目录（打包 exe 后与 exe 同级）。\n"
+            "抖音、B 站等爬虫下载合并完成后，都会把成品放到这里。"
+        )
+        extras_menu.addAction(action_open_output_dir)
+
         # 彩蛋：ihan 粉丝站
         action_ihan = QAction("ihan 粉丝站 ✨", self)
 
@@ -268,6 +1493,10 @@ class PetWindow(QWidget):
         action_crawl_douyin.triggered.connect(self._crawl_douyin)
         action_douyin_login.triggered.connect(self._douyin_login)
         action_douyin_logout.triggered.connect(self._douyin_logout)
+        action_proxy_settings.triggered.connect(self._open_proxy_settings)
+        action_clear_privacy.triggered.connect(self._open_clear_privacy)
+        action_open_data_dir.triggered.connect(self._open_data_dir)
+        action_open_output_dir.triggered.connect(self._open_output_dir)
         # 关于此项目
         action_github.triggered.connect(self._open_github)
         action_gitee.triggered.connect(self._open_gitee)
@@ -288,6 +1517,30 @@ class PetWindow(QWidget):
         """彩蛋：用系统默认浏览器打开王涵粉丝站 ihan.com.cn"""
         QDesktopServices.openUrl(QUrl(IHAN_URL))
 
+    def _open_proxy_settings(self):
+        dlg = ProxySettingsDialog(self)
+        dlg.exec()
+
+    def _open_clear_privacy(self):
+        dlg = ClearPrivacyDialog(self)
+        dlg.exec()
+
+    def _open_data_dir(self):
+        """在资源管理器里打开 data 根目录（exe 打包后用户依然可以随时查看/清理/找失败现场）。"""
+        from .resource_manager import get_data_path, open_in_explorer
+        p = get_data_path("")
+        ok, err = open_in_explorer(p)
+        if not ok:
+            QMessageBox.warning(self, "打开失败", f"无法打开 data 目录：\n{p}\n\n原因：{err}")
+
+    def _open_output_dir(self):
+        """在资源管理器里打开 output 根目录（最终成品所在）。"""
+        from .resource_manager import get_output_path, open_in_explorer
+        p = get_output_path("")
+        ok, err = open_in_explorer(p)
+        if not ok:
+            QMessageBox.warning(self, "打开失败", f"无法打开 output 目录：\n{p}\n\n原因：{err}")
+
     # ======================== 爬虫入口 ========================
 
     def _crawl_bilibili(self):
@@ -303,10 +1556,13 @@ class PetWindow(QWidget):
         self._crawler_worker.log.connect(self._on_crawler_log)
         self._crawler_worker.finished_ok.connect(self._on_crawler_ok)
         self._crawler_worker.failed.connect(self._on_crawler_failed)
+        # 无论成功失败，统一先把长任务浮层收掉
+        self._crawler_worker.finished_ok.connect(lambda *_: self._task_overlay_hide())
+        self._crawler_worker.failed.connect(lambda *_: self._task_overlay_hide())
         self._crawler_worker.start()
 
-        # 弹一个"开始爬取"的轻提示
-        self._show_notice("开始爬取B站最新视频，请稍候……")
+        self._task_overlay_show("正在启动 B 站爬虫…")
+        self._show_notice("开始爬取 B 站最新视频", duration_ms=1400)
 
     # ---------- 抖音 ----------
 
@@ -323,7 +1579,12 @@ class PetWindow(QWidget):
 
         # 用户扫码完成后，UI 弹"我已登录"对话框；点击确定后 allow_proceed() 让线程继续
         def on_user_action(text: str):
-            # 把浏览器恢复到前台，让用户能看到二维码
+            # 遮罩文案先更新一下，让用户知道程序在等他操作
+            # 登录阶段：浮层丢到屏幕右下角，避免盖住 Chrome 正中央的二维码
+            self._task_overlay_show(
+                "请在弹出的 Chrome 中扫码登录，完成后回到本窗口点「确认登录完成」",
+                anchor="screen_bottom_right",
+            )
             try:
                 import ctypes
                 ctypes.windll.user32.ShowWindow(
@@ -340,20 +1601,31 @@ class PetWindow(QWidget):
             box.button(QMessageBox.Cancel).setText("取消")
             if box.exec() == QMessageBox.Ok:
                 w.allow_proceed()
+                # 保存 Cookie 阶段：保持右下角（Chrome 还在切页，屏幕正中央还可能有滑块验证等）
+                self._task_overlay_show("正在检测登录状态并保存 Cookie…", anchor="screen_bottom_right")
 
         w.user_action_required.connect(on_user_action)
 
         def ok():
-            QMessageBox.information(
-                self,
-                "抖音登录成功",
+            # 非模态成功提示（show，不阻塞 Qt 事件循环，宠物可拖/右键）
+            box = QMessageBox(self)
+            box.setWindowTitle("抖音登录成功")
+            box.setIcon(QMessageBox.Information)
+            box.setStandardButtons(QMessageBox.Ok)
+            box.setText(
                 "Cookie 已保存到 data/douyin_cookies.(json|txt)\n"
-                "之后爬抖音就不需要再扫码了。过期后再到 拓展功能 → 抖音 → 登录/重新登录 操作一次即可。",
+                "之后爬抖音就不需要再扫码了。过期后再到 拓展功能 → 抖音 → 登录/重新登录 操作一次即可。"
             )
+            box.setAttribute(Qt.WA_DeleteOnClose, True)
+            box.show()
 
         w.finished_ok.connect(ok)
+        w.failed.connect(lambda *_: self._task_overlay_hide())
+        w.finished_ok.connect(lambda: self._task_overlay_hide())
         w.start()
-        self._show_notice("抖音登录引导启动，请按提示在浏览器中扫码。")
+        # 启动浏览器阶段也放右下角：Chrome 一弹出就是正中央，宠物头顶浮层会刚好压住二维码区域
+        self._task_overlay_show("正在启动抖音浏览器…", anchor="screen_bottom_right")
+        self._show_notice("抖音登录引导已启动", duration_ms=1400)
 
     def _crawl_douyin(self):
         """抖音最新视频抓取：优先用登录态；未登录先引导登录再继续。"""
@@ -372,7 +1644,8 @@ class PetWindow(QWidget):
         w.failed.connect(self._on_crawler_failed)
 
         def on_ok(video):
-            """DouyinCrawlWorker 成功的回调：弹 Explorer 选中下载文件 + 弹窗。"""
+            """DouyinCrawlWorker 成功的回调：弹 Explorer 选中下载文件 + 非模态提示框。"""
+            self._task_overlay_hide()
             try:
                 # 下载目录信息从 cover_url 里取（hack，保证不增加新字段）
                 dir_hint = None
@@ -386,22 +1659,34 @@ class PetWindow(QWidget):
                     extra_msg = f"\n\n已自动在资源管理器中高亮此文件。"
                 elif dir_hint:
                     extra_msg = f"\n\n下载目录：{dir_hint}"
-                QMessageBox.information(
-                    self,
-                    "抖音爬取完成",
+                box = QMessageBox(self)
+                box.setWindowTitle("抖音爬取完成")
+                box.setIcon(QMessageBox.Information)
+                box.setStandardButtons(QMessageBox.Ok)
+                box.setText(
                     f"最新作品：{video.desc or video.aweme_id}\n"
-                    f"播放页：{video.web_url}{extra_msg}",
+                    f"播放页：{video.web_url}{extra_msg}"
                 )
-            except Exception as e:
-                QMessageBox.information(
-                    self,
-                    "抖音爬取完成",
-                    f"最新作品：{video.desc or video.aweme_id}\n播放页：{video.web_url}",
+                box.setAttribute(Qt.WA_DeleteOnClose, True)
+                box.show()
+            except Exception:
+                box = QMessageBox(self)
+                box.setWindowTitle("抖音爬取完成")
+                box.setIcon(QMessageBox.Information)
+                box.setStandardButtons(QMessageBox.Ok)
+                box.setText(
+                    f"最新作品：{video.desc or video.aweme_id}\n播放页：{video.web_url}"
                 )
+                box.setAttribute(Qt.WA_DeleteOnClose, True)
+                box.show()
 
         w.finished_ok.connect(on_ok)
+        w.failed.connect(lambda *_: self._task_overlay_hide())
         w.start()
-        self._show_notice("开始爬取抖音最新视频，请稍候……")
+        # 抖音爬取也会先开 Chrome 进个人主页（万一还没登录 / 有滑块验证，二维码/弹窗仍在正中央），
+        # 同样先放右下角；等后续日志更新如果用户把浮层关了也不会再跳回头顶。
+        self._task_overlay_show("正在启动抖音爬取任务…", anchor="screen_bottom_right")
+        self._show_notice("开始爬取抖音最新视频", duration_ms=1400)
 
     def _douyin_logout(self):
         """一键清除三处抖音登录数据。带二次确认，避免误删。"""
@@ -451,24 +1736,47 @@ class PetWindow(QWidget):
     # ---------- 通用日志/结果回调 ----------
 
     def _on_crawler_log(self, msg: str):
-        """爬虫进度日志。目前仅打印，后期可接状态栏或气泡。"""
+        """爬虫进度日志：打印到 Terminal，同时同步更新任务浮层文案（只看关键步骤、不叠文字）。"""
         print("[爬虫]", msg)
+        # 关键步骤关键字过滤 → 同步到浮层（全部同步会闪瞎眼）
+        important = any(k in msg for k in (
+            "浏览器", "登录", "Cookie", "保存", "扫码",
+            "打开个人主页", "获取最新视频", "共获取",
+            "开始调用", "下载", "yt-dlp",
+            "个人主页", "作品",
+            "启动", "启动中",
+        ))
+        if important:
+            # 浮层宽度有限，限制 30 字中文左右，超出末尾…
+            short = msg.strip()
+            if len(short) > 38:
+                short = short[:36] + "…"
+            self._task_overlay_show(short)
 
     def _on_crawler_ok(self, info):
-        """爬虫成功完成：用系统默认文件管理器打开输出位置 + 弹窗提示。"""
+        """B 站爬虫成功完成：非模态提示 + 资源管理器高亮选中文件（不阻塞 Qt，宠物可拖）。"""
+        self._task_overlay_hide()
         try:
             output_path = Path(info.output_path)
             if output_path.exists():
                 # 高亮选中这个文件（Windows Explorer）
                 import subprocess
                 subprocess.Popen(["explorer", "/select,", str(output_path)])
-            QMessageBox.information(
-                self,
-                "爬取完成",
-                f"最新视频：{info.title}\n\n已保存到：\n{info.output_path}",
-            )
-        except Exception as e:
-            QMessageBox.information(self, "爬取完成", f"{info.title}\n输出：{info.output_path}")
+            box = QMessageBox(self)
+            box.setWindowTitle("B 站爬取完成")
+            box.setIcon(QMessageBox.Information)
+            box.setStandardButtons(QMessageBox.Ok)
+            box.setText(f"最新视频：{info.title}\n\n已保存到：\n{info.output_path}")
+            box.setAttribute(Qt.WA_DeleteOnClose, True)
+            box.show()
+        except Exception:
+            box = QMessageBox(self)
+            box.setWindowTitle("B 站爬取完成")
+            box.setIcon(QMessageBox.Information)
+            box.setStandardButtons(QMessageBox.Ok)
+            box.setText(f"{info.title}\n输出：{info.output_path}")
+            box.setAttribute(Qt.WA_DeleteOnClose, True)
+            box.show()
 
     def _on_crawler_failed(self, err_msg: str):
         """失败弹窗；如果是抖音未登录需要扫码，额外提供一个"现在去登录"按钮。"""
@@ -489,21 +1797,6 @@ class PetWindow(QWidget):
                 self._douyin_login()
             return
         QMessageBox.warning(self, "爬虫失败", err_msg)
-
-    def _show_notice(self, text: str):
-        """非模态、自动关闭的轻提示。当前用 QMessageBox.information，后期可换成气泡。"""
-        # 用 Qt.Popup 属性让它不阻塞，用户点一下或点别处即关
-        box = QMessageBox(self)
-        box.setWindowTitle("提示")
-        box.setText(text)
-        box.setIcon(QMessageBox.Information)
-        box.setStandardButtons(QMessageBox.NoButton)
-        box.setWindowFlags(box.windowFlags() | Qt.Popup | Qt.FramelessWindowHint)
-        # 1.2 秒自动关
-        QTimer.singleShot(1200, box.close)
-        # 放在宠物窗口上方
-        box.move(self.x() + 10, self.y() - 60)
-        box.show()
 
     # ======================== 清理 ========================
 
