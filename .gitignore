@@ -10,10 +10,14 @@ __pycache__/
 venv/
 env/
 
-# 打包输出
+# 打包输出（PyInstaller 自动生成，不入库）
 build/
 dist/
+release/
 *.spec
+# 例外：手工维护的打包脚本入库
+!scripts/
+!scripts/*.spec
 
 # IDE
 .idea/
@@ -23,6 +27,7 @@ dist/
 # 运行时数据
 data/*.json
 data/*.txt      # douyin_cookies.txt 等用户登录态 Netscape 格式
+data/consent.json   # 用户首次启动同意记录（每个用户本地状态，不入库）
 !data/.gitkeep
 output/*
 !output/.gitkeep

@@ -9,6 +9,7 @@ import signal
 from PySide6.QtCore import QTimer
 from PySide6.QtWidgets import QApplication
 
+from src.consent import check_consent_or_quit
 from src.main_window import PetWindow
 
 
@@ -18,6 +19,12 @@ def main():
 
     app = QApplication(sys.argv)
     app.setQuitOnLastWindowClosed(True)
+
+    # —— 首次启动免责声明检查 ——
+    # 必须在 QApplication 创建后、PetWindow 创建前调用
+    # 用户不同意则直接退出
+    if not check_consent_or_quit():
+        sys.exit(0)
 
     # 定时器让 Python 有机会处理 SIGINT 信号
     timer = QTimer()
