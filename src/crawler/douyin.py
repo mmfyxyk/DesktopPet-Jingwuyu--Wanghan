@@ -473,26 +473,26 @@ class DouyinCrawler:
         遗留兼容（终端脚本 tools/douyin_first_login.py）：
           仍可直接调本方法，但会 print 日志 + WebDriverWait 轮询。
         """
+        import time as _t
         driver = self._open_browser(foreground=foreground)
         try:
-            # 直接打开首页：未登录时首页右上角会自然出现"登录"按钮或弹二维码
-            # （不走 /passport/web/user/login 这个内部旧 URL，改版后会返回"非法用户"）
             driver.get("https://www.douyin.com/")
             driver.implicitly_wait(5)
 
             self._detect_fatal_page(driver)
-            # —— 新加：检测抖音人机挑战（文字点选/滑块/iframe），一旦命中就立刻打醒目提示 ——
             self._emit_anti_spam_if_any(driver, stage="打开抖音首页(ensure_login)")
 
-            already_logged_in = self._check_logged_in(driver)
+            # —— 「已有登录态」判定用强校验 strong=True：
+            # 必须 cookie 非空 + 真的看到头像/消息/发布按钮 UI，才认为真的有效；
+            # 否则"profile 里有过期 cookie 但首页 UI 仍显示登录按钮"这种场景会静默 dump
+            # 一份垃圾 cookie，之后爬作品时强校验失败就变成两头堵死循环。
+            already_logged_in = self._check_logged_in(driver, strong=True)
             if already_logged_in:
                 self._dump_cookies(driver)
                 return
 
-            # 首页有时候不会自己弹二维码（新版抖音会把入口藏在顶部登录按钮里）。
-            # 主动尝试点击一下"登录"或「扫码登录」按钮 / 关掉协议弹窗。
+            # —— 下面进入"需要用户扫码"流程 ——
             self._try_show_login_qr_or_panel(driver)
-            # 弹窗被我们点出来之后，再扫一次风控（有的是"点登录按钮后才弹拼图/文字验证"）
             self._emit_anti_spam_if_any(driver, stage="主动弹登录面板后(ensure_login)")
 
             print(
@@ -500,19 +500,26 @@ class DouyinCrawler:
                 f"[抖音爬虫] 登录成功后程序将在 {max_wait_sec}s 内自动检测并继续。"
             )
 
-            # 等登录成功；每 3s 顺带扫一次风控（避免用户一直死等）
             t_max = max(3, int(max_wait_sec))
             _slept = 0
             while _slept < t_max:
-                if self._check_logged_in(driver):
-                    self._dump_cookies(driver)
-                    return
-                import time as _t
+                # 扫码期间用宽松判定（用户刚扫完码，头像可能还没渲染完）：宽松判定
+                if self._check_logged_in(driver, strong=False):
+                    # 命中宽松判定后再等一次（最多 10s）让 UI 渲染完，再做强校验；
+                    # 此时强校验若还不过，就继续等用户操作。
+                    _t2 = 0
+                    while _t2 < 10:
+                        if self._check_logged_in(driver, strong=True):
+                            self._dump_cookies(driver)
+                            return
+                        _t.sleep(1)
+                        _t2 += 1
+                    # 10s 内没升级为强真 → 可能是滑块没完成 / 二次验证没做
+                    self._emit_anti_spam_if_any(driver, stage=f"宽松命中后强判定10s未通过({_slept}s)")
                 _t.sleep(3)
                 _slept += 3
                 if _slept % 15 == 0:
                     self._emit_anti_spam_if_any(driver, stage=f"等待用户扫码中({_slept}s)")
-            # 最后超时了再扫一次，告诉用户到底是哪卡住
             self._emit_anti_spam_if_any(driver, stage="ensure_login 等待超时")
             raise DouyinLoginRequired(f"{t_max}s 内未检测到登录成功。请重新发起登录。")
         finally:
@@ -650,28 +657,86 @@ class DouyinCrawler:
                 "  2) 当前账号/IP触发风控；换个网络再试 / 或者扫码登录后直接正常浏览。"
             )
 
-    @staticmethod
-    def _check_logged_in(driver) -> bool:
-        """三态判定：已登录=True / 未登录=False / 页面异常=抛异常 / 未知=False 继续等。"""
+    def _check_logged_in(self, driver, *, strong: bool = False) -> bool:
+        """登录态判定。
+
+        参数 strong=False（默认）：
+            用在「扫码登录后等待用户点确认」这种循环场景——宽松判定：
+              * cookie 有 sessionid_ss / sessionid 且非空 → True
+              * DOM 看到「登录」按钮明确出现 → False
+              * DOM 看到 avatar 且没有「登录」按钮 → True
+              * 其他未知 → False（继续等）
+
+        参数 strong=True（爬作品前校验 / 重新登录时判定是否「真的已登录能用」）：
+            严格判定：必须满足"sessionid_ss cookie 非空 AND DOM 里真的看得到个人区域头像/昵称"，
+            避免出现「cookie 里有过期 sessionid_ss 字段 → 误判已登录 → dump 了一份没用的
+            cookie → 爬作品又说未登录」的死循环。
+
+        页面异常=抛 DouyinLoginRequired；其他未知=False 继续等。
+        """
         try:
-            # 先看页面会不会本身是"非法用户"
-            # 先兜底看 cookie：sessionid / sessionid_ss 任意一个就是登录态
+            # Step 1: cookie 层基础判定（sessionid_ss 必须存在 AND 值非空 AND 不是明显过期的空串）
             cookies = {c["name"]: c.get("value", "") for c in driver.get_cookies()}
-            if cookies.get("sessionid") or cookies.get("sessionid_ss"):
-                return True
-            # DOM 判定：登录后右上角有自己头像（class 里含 avatar），或者有带 nickname 的文本元素
-            # 登录按钮出现 → 明确是未登录，返回 False 继续等
+            sid = (cookies.get("sessionid_ss") or cookies.get("sessionid") or "").strip()
+            has_valid_cookie = bool(sid)
+            # Step 2: DOM 层"明确未登录"判定 —— 有「登录」按钮 / 「立即登录」入口可见
             login_btns = driver.find_elements(
                 By.XPATH,
-                "//*[self::div or self::button or self::span or self::a][contains(normalize-space(text()), '登录') and string-length(normalize-space(text())) <= 10]",
+                "//*[self::div or self::button or self::span or self::a or self::p]"
+                "[string-length(normalize-space(text())) <= 10]"
+                "[normalize-space(text())='登录' or normalize-space(text())='立即登录']",
             )
             has_login_btn = any(e.is_displayed() for e in login_btns)
-            avatar_eles = driver.find_elements(By.CSS_SELECTOR, 'img[class*="avatar"]')
-            has_avatar = any(e.is_displayed() for e in avatar_eles)
-            if has_avatar and not has_login_btn:
-                return True
-            # 还不确定 → 返回 False（由上层等）
-            return False
+            # Step 3: DOM 层"明确已登录"判定 —— 个人头像区 + 昵称/消息等登录后元素
+            strong_signals: list[bool] = []
+            # 3.1 头像：右上角登录后会出现 <img src="..."> 含 avatar/user/face 关键字，或 class 含 avatar
+            try:
+                avatars = driver.find_elements(By.CSS_SELECTOR, 'img[class*="avatar"], img[class*="Avatar"]')
+                if any(e.is_displayed() for e in avatars):
+                    strong_signals.append(True)
+            except Exception:
+                pass
+            # 3.2 登录后右上角常见「我的」「消息」两个入口（通常并排）
+            try:
+                nav_texts = driver.find_elements(
+                    By.XPATH,
+                    "//*[self::a or self::div or self::span]"
+                    "[normalize-space(text())='消息' or normalize-space(text())='我的']"
+                )
+                visible_texts = [e for e in nav_texts if e.is_displayed()]
+                if len(visible_texts) >= 1:
+                    strong_signals.append(True)
+            except Exception:
+                pass
+            # 3.3 「发布」「创作者中心」按钮（只对登录用户显示，带"发布"关键字）
+            try:
+                publish_btns = driver.find_elements(
+                    By.XPATH,
+                    "//*[self::button or self::a or self::div][contains(normalize-space(.), '发布作品') or contains(normalize-space(.), '创作者中心')]"
+                )
+                if any(e.is_displayed() for e in publish_btns):
+                    strong_signals.append(True)
+            except Exception:
+                pass
+            has_strong_ui = any(strong_signals) if strong_signals else False
+
+            # —— 组合判定 ——
+            if has_login_btn:
+                # 有「登录」入口可见 → 不管 cookie 是什么，UI 意义上一定是未登录
+                return False
+            if strong:
+                # 强判定：cookie + UI 信号都要过
+                if has_valid_cookie and has_strong_ui:
+                    return True
+                # 只有 cookie 没有 UI 信号 → 认为是"过期cookie残留"（死循环元凶），返回 False
+                return False
+            else:
+                # 宽松判定：有强 UI 信号直接 True；或只有 cookie True（给扫码阶段宽松判断）
+                if has_strong_ui:
+                    return True
+                if has_valid_cookie:
+                    return True
+                return False
         except DouyinLoginRequired:
             raise
         except Exception:
@@ -800,9 +865,11 @@ class DouyinCrawler:
             self._detect_fatal_page(driver)
             self.logger("  没有命中「非法用户」等坏页关键字，继续…")
 
-            # 2) 检查当前是不是"被要求登录"状态（有些私密用户/风控会在主页上强制出登录弹窗）
-            login_ok = self._check_logged_in(driver)
-            self.logger(f"  登录态检测：{'✅ 已登录' if login_ok else '❌ 未登录或页面不完整'}")
+            # 2) 检查当前是不是"被要求登录"状态（严格判定 strong=True）
+            #    strong=True 必须同时满足"cookie有效 + DOM看到个人区域UI（头像/消息/发布按钮）"，
+            #    防止「cookie 有过期 sessionid_ss → 误判已登录 → 作品页 0 条」的两头堵死循环
+            login_ok = self._check_logged_in(driver, strong=True)
+            self.logger(f"  登录态检测（严格）：{'✅ 已登录' if login_ok else '❌ 未登录或页面不完整'}")
             if not login_ok:
                 # 再扫一次风控（很多时候"未登录"只是被验证码挡住了）
                 self._emit_anti_spam_if_any(driver, stage="登录态判定为False(cookie可能还行但被验证码挡住)")
@@ -819,107 +886,273 @@ class DouyinCrawler:
                     "若上方日志里看到「⚠️ [抖音风控] … 安全验证 / 验证码 / 滑块」等字样，属于抖音网页版风控，在你刚打开的 Chrome 里手动过一次验证，然后重新爬取即可。"
                 )
 
-            # 3) 等作品卡片。抖音前端新版本经常换 class，选择器 a[href*="/video/"] 是最稳的兜底
-            self.logger("  等待作品 a[href*=\"/video/\"] 卡片渲染（≤ 20s，等到即提前继续）…")
+            # 2.5) 反爬兜底 A：主动切「作品」tab。
+            # 新版抖音个人主页默认在「推荐」或「关注」tab，不切过去作品区就是空。
+            try:
+                tab_selectors = [
+                    # 新版：tab 里写"作品"
+                    "//*[self::div or self::a or self::span or self::button][normalize-space(text())='作品' and string-length(normalize-space(.)) <= 8]",
+                    # 稍老版本："投稿"tab
+                    "//*[self::div or self::a or self::span or self::button][normalize-space(text())='投稿' and string-length(normalize-space(.)) <= 8]",
+                ]
+                clicked_tab = False
+                for xp in tab_selectors:
+                    try:
+                        candidates = driver.find_elements(By.XPATH, xp)
+                    except Exception:
+                        continue
+                    for c in candidates:
+                        try:
+                            if not c.is_displayed():
+                                continue
+                            try:
+                                c.click()
+                            except Exception:
+                                driver.execute_script(
+                                    "arguments[0].dispatchEvent(new MouseEvent('click', {bubbles:true, cancelable:true}));", c
+                                )
+                            clicked_tab = True
+                            break
+                        except Exception:
+                            continue
+                    if clicked_tab:
+                        break
+                if clicked_tab:
+                    import time as _t
+                    _t.sleep(2.0)
+                    self.logger("  已主动切换到「作品」tab")
+            except Exception as e:
+                self.logger(f"  （非致命）切作品 tab 失败：{type(e).__name__}: {e}")
+
+            # 3) 等作品卡片。先等 25s 到作品 a 出现
+            self.logger("  等待作品 a[href*=\"/video/\"] 卡片渲染（≤ 25s，等到即提前继续）…")
             waited_ok = False
             try:
-                WebDriverWait(driver, 20).until(
+                WebDriverWait(driver, 25).until(
                     EC.presence_of_element_located((By.CSS_SELECTOR, 'a[href*="/video/"]'))
                 )
                 waited_ok = True
             except Exception as e:
-                self.logger(f"  20s 没等到作品卡片：{type(e).__name__}（继续尝试读取当前页面里已有的 <a>，看是否命中）")
+                self.logger(f"  25s 没等到作品卡片：{type(e).__name__}（继续尝试读取当前页面里已有的 <a>，看是否命中）")
                 self._emit_anti_spam_if_any(driver, stage="等待作品卡片超时(可能被验证码挡住)")
 
-            # 3.5) 如果作品区还是空，可能是新版 SPA 还没 XHR 回数据，再给一次轻滚动触发懒加载
-            anchors0 = driver.find_elements(By.CSS_SELECTOR, 'a[href*="/video/"]')
-            self.logger(f"  当前能查到的作品 a 数量：{len(anchors0)} （waited_ok={waited_ok}）")
-            if len(anchors0) == 0:
-                self.logger("  作品区还是空，尝试滚动一下触发懒加载…")
+            # 3.5) 多轮滚动触达懒加载（max_scrolls 轮）
+            max_scrolls = 4
+            anchors_count = 0
+            for _round in range(max_scrolls):
+                anchors0 = driver.find_elements(By.CSS_SELECTOR, 'a[href*="/video/"]')
+                anchors_count = len(anchors0)
+                self.logger(f"  [滚动 round {_round+1}/{max_scrolls}] 当前能查到的作品 a：{anchors_count} 条（waited_ok={waited_ok}）")
+                if anchors_count >= max(8, count + 8):
+                    # 够多了就停
+                    break
                 try:
                     driver.execute_script(
-                        "window.scrollTo({top: Math.max(300, document.body.scrollHeight * 0.3), behavior: 'instant'});"
+                        "window.scrollTo({top: window.scrollY + (document.documentElement.clientHeight * 0.8), behavior: 'instant'});"
                     )
                     import time as _t
-                    _t.sleep(1.5)
+                    _t.sleep(1.8)
                 except Exception as e:
-                    self.logger(f"  滚动失败：{type(e).__name__}: {e}")
+                    self.logger(f"  滚动 round {_round+1} 失败：{type(e).__name__}: {e}")
 
-            # 4) 从页面里拿多少算多少
-            hrefs: list[str] = []
-            # 4.1) Selenium 选择器兜底（CSS 精确匹配 <a href>）
-            for a in driver.find_elements(By.CSS_SELECTOR, 'a[href*="/video/"]'):
+            # 3.9) 若还是空 → 存 DOM 快照 + 截图到 data/ 下，帮用户排查反爬
+            anchors0 = driver.find_elements(By.CSS_SELECTOR, 'a[href*="/video/"]')
+            if len(anchors0) == 0:
+                self.logger("  ⚠️  全部滚动轮次后作品区仍为 0，疑似反爬 / 账号私密 / 页面改版。现在保存调试快照…")
                 try:
-                    href = a.get_attribute("href") or ""
-                except Exception:
-                    continue
-                if href and "/video/" in href and href not in hrefs:
-                    hrefs.append(href)
-            self.logger(f"  [选择器 1/2] a[href*=\"/video/\"] 拿到：{len(hrefs)} 条")
+                    from ..resource_manager import get_data_path
+                    ts_str = time.strftime("%Y%m%d_%H%M%S")
+                    snap_html = get_data_path(f"douyin_home_debug_{ts_str}.html")
+                    with open(snap_html, "w", encoding="utf-8") as f:
+                        f.write(driver.page_source or "")
+                    self.logger(f"    · 页面源码快照：{snap_html}")
+                    # 顺带保存 URL / Title / Cookie 键名
+                    snap_meta = get_data_path(f"douyin_home_debug_{ts_str}.txt")
+                    with open(snap_meta, "w", encoding="utf-8") as f:
+                        ck_names = sorted({c.get("name","") for c in (driver.get_cookies() or [])})
+                        f.write(
+                            f"URL:   {driver.current_url}\n"
+                            f"Title: {driver.title}\n"
+                            f"Cookies ({len(ck_names)}): {', '.join(ck_names)}\n"
+                            f"sec_uid: {self.sec_uid}\n"
+                        )
+                    self.logger(f"    · 环境元信息：{snap_meta}")
+                    # 尝试截图（可能因无头或 DPI 失败但不致命）
+                    try:
+                        snap_png = get_data_path(f"douyin_home_debug_{ts_str}.png")
+                        driver.save_screenshot(snap_png)
+                        self.logger(f"    · 可视区截图：{snap_png}")
+                    except Exception:
+                        pass
+                except Exception as e:
+                    self.logger(f"  保存快照失败（不致命）：{type(e).__name__}: {e}")
 
-            # 4.2) JS 兜底：直接在浏览器里遍历所有 <a> 的完整 href（含绝对化后的），再正则命中 /video/19 位数字
-            #    这个兜底专门解决「用户肉眼看到作品全显示，但 Selenium get_attribute 取不到」的新版 DOM 情况
-            if len(hrefs) < count:
-                try:
-                    js = r"""
-                    const set = new Set();
-                    const re = /\/video\/(\d{17,21})/;   // 19 位 aweme_id，上下兼容 2 位
-                    document.querySelectorAll('a').forEach(a => {
-                      const h = (a && (a.href || a.getAttribute && a.getAttribute('href')) || '').toString();
-                      if (re.test(h)) set.add(h.split('#')[0].split('?')[0]);
-                    });
-                    // 兜底再扫一遍所有元素的 onclick / data-href / data-src，防止 URL 放属性里
-                    document.querySelectorAll('*').forEach(el => {
-                      for (const attr of ['data-href', 'data-src', 'data-to', 'to', 'href']) {
-                        const v = el.getAttribute && el.getAttribute(attr);
-                        if (typeof v === 'string' && re.test(v)) set.add(v.split('#')[0].split('?')[0]);
+            # 4) 一次性用 JS 扫卡片：区分「置顶」和「普通」，只保留普通视频
+            #
+            # —— 置顶判断的设计原则（修复 2026-08-30 误判 15/15 全是置顶的 bug）：
+            #   「置顶」标签是卡片**自身**上的一个小徽章（通常是 10×30px 左右的彩色 span），
+            #   绝对不能用父级容器的 innerText 判，因为抖音把分区标题写成「置顶作品」，
+            #   父级 innerText 会带「置顶」两字 → 整个分区所有卡片都被误判为置顶。
+            #
+            #   因此判定规则改为：
+            #     1) 找 a 元素往上最多 3 层内（卡片容器层）的**直接子元素**里，
+            #        是否有带「置顶」文本的小标签（长度 <= 8 字符，避免扫到长文案）
+            #     2) 同范围内 class 精确含 pin/pinned/isTop 等徽章 class
+            #     3) a 自身 data-pin / aria-label 含 pin 属性
+            #   命中才叫置顶。父级 4 层以上分区标题一律不看。
+            pinned_hrefs: set[str] = set()
+            normal_items: list[tuple[str, str]] = []   # (href, desc_text)
+            try:
+                js = r"""
+                const re = /\/video\/(\d{17,21})/;
+                const seen = new Set();
+                const items = [];
+                const PIN_CLS_RE = /\b(pin|Pinned|isTop|IsTop|pinned)\b/;
+
+                // —— 在根元素的 direct-children 里找独立的「置顶」小徽章元素 ——
+                function lookForPinBadge(root) {
+                  if (!root || !root.children) return false;
+                  for (const child of root.children) {
+                    if (!child) continue;
+                    try {
+                      // 文本式小标签：normalize 后纯文本就是「置顶」或「置顶视频」等 2~6 字
+                      const txt = (child.innerText || child.textContent || '').trim();
+                      if (txt.length >= 2 && txt.length <= 8 && /^置顶/.test(txt)) {
+                        return true;
                       }
-                    });
-                    return Array.from(set);
-                    """
-                    js_hrefs = driver.execute_script(js) or []
-                    added = 0
-                    for h in js_hrefs:
-                        if isinstance(h, str) and "/video/" in h and h not in hrefs:
-                            # normalize 一下相对路径
-                            if h.startswith("/video/"):
-                                h = "https://www.douyin.com" + h
-                            hrefs.append(h)
-                            added += 1
-                    self.logger(f"  [选择器 2/2] JS 遍历所有 a + 属性扫到新增：{added} 条（累计 {len(hrefs)} 条）")
-                except Exception as e:
-                    self.logger(f"  [选择器 2/2] JS 兜底失败（不致命，继续按 Selenium 结果）：{type(e).__name__}: {e}")
+                      // class 里带 pin/pinned/isTop（精确词边界，防止 TOPIC 这种单词误中）
+                      const cls = (child.className && typeof child.className === 'string') ? child.className : '';
+                      if (PIN_CLS_RE.test(cls)) return true;
+                      // data-* 属性里有 pin
+                      for (const attr of ['data-pin','data-e2e','aria-label','role']) {
+                        const v = (child.getAttribute && child.getAttribute(attr)) || '';
+                        if (/\bpin(ned)?\b/i.test(v)) return true;
+                      }
+                    } catch(e) {}
+                    // 再下钻一层孙子级（有的置顶徽章外面套了个空 wrapper）
+                    if (child.children && child.children.length && child.children.length <= 4) {
+                      for (const gchild of child.children) {
+                        try {
+                          const txt = (gchild.innerText || gchild.textContent || '').trim();
+                          if (txt.length >= 2 && txt.length <= 8 && /^置顶/.test(txt)) return true;
+                          const cls = (gchild.className && typeof gchild.className === 'string') ? gchild.className : '';
+                          if (PIN_CLS_RE.test(cls)) return true;
+                        } catch(e) {}
+                      }
+                    }
+                  }
+                  return false;
+                }
+                // —— 综合判断：对 <a> 自身查属性，再查向上 3 层内的容器 direct-children 徽章 ——
+                function isPinned(a) {
+                  if (!a) return false;
+                  // 1) a 自身属性
+                  try {
+                    const cls = (a.className && typeof a.className === 'string') ? a.className : '';
+                    if (PIN_CLS_RE.test(cls)) return true;
+                    for (const attr of ['data-pin','data-e2e','aria-label']) {
+                      const v = (a.getAttribute && a.getAttribute(attr)) || '';
+                      if (/\bpin(ned)?\b/i.test(v)) return true;
+                    }
+                  } catch(e) {}
+                  // 2) 向上 3 层：每层 direct-children 找徽章
+                  let cur = a.parentElement;
+                  for (let level = 0; cur && level < 3; level++) {
+                    if (lookForPinBadge(cur)) return true;
+                    cur = cur.parentElement;
+                  }
+                  return false;
+                }
+                function addHref(h, desc, pinned) {
+                  if (!h || !re.test(h)) return;
+                  const clean = h.split('#')[0].split('?')[0];
+                  const abs = clean.startsWith('/') ? ('https://www.douyin.com' + clean) : clean;
+                  if (seen.has(abs)) return;
+                  seen.add(abs);
+                  items.push({ href: abs, desc: (desc || '').slice(0, 200), pinned: !!pinned });
+                }
+                // 方式 A：遍历所有 <a href*=video/>，按 DOM 位置判断置顶
+                document.querySelectorAll('a[href*="/video/"]').forEach(a => {
+                  const href = a.href || a.getAttribute && a.getAttribute('href') || '';
+                  let desc = (a.innerText || a.textContent || '').trim();
+                  if (!desc && a.parentElement) {
+                    desc = (a.parentElement.innerText || a.parentElement.textContent || '').trim();
+                  }
+                  addHref(href, desc, isPinned(a));
+                });
+                // 方式 B：兜底扫所有元素 href/data-* 属性（不走置顶判断，靠集合去重）
+                document.querySelectorAll('*').forEach(el => {
+                  for (const attr of ['data-href', 'data-src', 'data-to', 'to', 'href']) {
+                    const v = el.getAttribute && el.getAttribute(attr);
+                    if (typeof v === 'string' && re.test(v)) {
+                      addHref(v, '', false);
+                    }
+                  }
+                });
+                return items;
+                """
+                raw_items = driver.execute_script(js) or []
+                for it in raw_items:
+                    href = (it or {}).get('href') or ''
+                    desc = (it or {}).get('desc') or ''
+                    pinned = bool((it or {}).get('pinned'))
+                    if not href or '/video/' not in href:
+                        continue
+                    if pinned:
+                        pinned_hrefs.add(href)
+                        continue
+                    normal_items.append((href, desc))
+            except Exception as e:
+                self.logger(f"  JS 扫卡片失败：{type(e).__name__}: {e}，回退到 Selenium 扁平抓 href")
+                for a in driver.find_elements(By.CSS_SELECTOR, 'a[href*="/video/"]'):
+                    try:
+                        href = a.get_attribute("href") or ""
+                    except Exception:
+                        continue
+                    if href and "/video/" in href:
+                        normal_items.append((href, ""))
 
-            self.logger(f"  最终解析到作品链接数：{len(hrefs)}")
+            # —— 兜底回退：过滤完普通视频 < 目标 count 时，说明置顶判断可能仍太激进 ——
+            #   （例如抖音又换了徽章样式），此时放宽：之前被过滤为"置顶"的也按普通视频进列表，
+            #   但打一条醒目日志，让用户知道置顶判断失效了。
+            total_pinned = len(pinned_hrefs)
+            if normal_items and total_pinned > 0 and len(normal_items) < count:
+                self.logger(
+                    f"  ⚠️  过滤后普通视频仅 {len(normal_items)} 条，目标 {count} 条；"
+                    f"怀疑置顶判断可能漏判/误判（共 {total_pinned} 条被标为置顶）。"
+                    f"现在把被过滤的置顶链接也一并按普通视频放回列表，避免爬不到作品。"
+                )
+                for ph in pinned_hrefs:
+                    # 去重：如果 normal_items 里已经有同 href 就不重复加
+                    if any(h == ph for h, _ in normal_items):
+                        continue
+                    normal_items.append((ph, ""))
+                pinned_hrefs.clear()   # 既然被加回来了，就清零"被过滤"
 
+            self.logger(f"  解析到卡片：普通 {len(normal_items)} 条，已过滤置顶 {len(pinned_hrefs)} 条")
+            if pinned_hrefs:
+                sample = list(pinned_hrefs)[:3]
+                self.logger(f"  被过滤的置顶链接示例：{sample}")
+
+            # —— 组装结果：从「普通」列表里取前 count 条 ——
             results: list[DouyinVideo] = []
-            for href in hrefs[:count]:
+            for href, desc in normal_items:
+                if len(results) >= count:
+                    break
                 aweme_id = self._aweme_id_from_url(href)
                 if not aweme_id:
                     continue
-                try:
-                    # 新版 DOM 里 <a> 本身往往没有 text，取其父节点的文本
-                    desc = ""
-                    try:
-                        desc = (a.text or "").strip()
-                        if not desc:
-                            parent = a.find_element(By.XPATH, "..")
-                            desc = (parent.text or "").strip()
-                    except Exception:
-                        pass
-                    if not desc:
-                        desc = aweme_id
-                    # 限制长度，避免 UI 上一长条
-                    if len(desc) > 60:
-                        desc = desc[:58] + "…"
-                except Exception:
+                # JS 返回时已顺手带了 desc，没有的话兜底用 aweme_id
+                if not desc:
                     desc = aweme_id
+                if len(desc) > 60:
+                    desc = desc[:58] + "…"
                 results.append(DouyinVideo(
                     aweme_id=aweme_id,
                     web_url=href,
                     desc=desc,
                 ))
-            self.logger(f"  解析后保留的作品条目：{len(results)}")
+            self.logger(f"  从普通视频中取 {len(results)} 条")
 
             # 刷新一次 cookie（sessionid 可能被刷新）
             try:
@@ -1001,13 +1234,25 @@ class DouyinCrawler:
 
         # —— 一次 yt-dlp 执行封装；返回 (rc, 累积的日志行首端, 临时目录新增文件) ——
         def _run_once(attempt_tag: str):
+            # 输出命名：纯标题（≤80字）+ 扩展名，与 B 站「标题.mp4」格式保持一致
+            # - title 字段如果为空 / 全非法字符 → yt-dlp 会退化出「NA.%(ext)s」，我们兜底替换成 aweme_id
+            # - Windows 非法字符：yt-dlp 内部自动替我们把 \/:*?"<>| 替换成 _（restrict-filenames 默认关，但仍会做最小化替换）
+            #   这里显式强制 restrictfilenames=False（默认），保留中文等字符；
+            # - 临时目录内冲突（极少情况：同一批次 2 个不同视频同名）：yt-dlp 没被覆盖，默认跳过
+            #   但 move 到最终 output/ 时外面还有 _dup1/_dup2 二次保障，不丢文件
+            outtmpl = os.path.join(tmp_dir, "%(title).80s.%(ext)s")
             cmd = [
                 sys_executable(),
                 "-m", "yt_dlp",
                 "--no-warnings",
                 "--cookies", self.cookie_jar_netscape,
                 "--no-check-certificate",
-                "-o", os.path.join(tmp_dir, "%(title).80s [%(id)s].%(ext)s"),
+                "-o", outtmpl,
+                # --no-overwrites 保证同目录重名不会覆盖，yt-dlp 会自动追加 -1 -2 或跳过；
+                # 外面再做 _dup1 去重兜底，双层保障
+                "--no-overwrites",
+                # 标题为空时让 yt-dlp 把 id 当 fallback 文件名（避免生成 "NA.mp4"）
+                # yt-dlp %(title)s 取不到的表现是空串或 NA，所以我们输出文件后再做一次 rename 兜底
             ]
             if self.proxy is not None:
                 cmd += ["--proxy", self.proxy or ""]
@@ -1177,6 +1422,44 @@ class DouyinCrawler:
                 f"最近一次错误：{tail_err}\n"
                 f"临时文件保留在：{tmp_dir}"
             )
+
+        # —— 兜底：yt-dlp 拿不到 title 时会输出 NA.mp4 / .mp4 这种难看的名字 ——
+        # 找到 candidate 后、move 前先在临时目录内 rename 成 aweme_id 做文件名。
+        # （此时 title 字段不可知，但 DouyinVideo.desc 里有，优先用 desc 再兜底 aweme_id）
+        fallback_base = ""
+        cand_dir, cand_name = os.path.split(candidate)
+        cand_stem, cand_ext = os.path.splitext(cand_name)
+        cand_stem_stripped = cand_stem.strip()
+        looks_bad = (
+            not cand_stem_stripped
+            or cand_stem_stripped.lower() == "na"
+            or cand_stem_stripped in ("NA", "video", "Untitled", "未命名")
+            or len(cand_stem_stripped) <= 3  # 极短的退化名
+        )
+        if looks_bad:
+            # 先用 video.desc（解析列表时拿到的作品文案），再兜底用 aweme_id
+            preferred = (video.desc or "").strip()
+            # desc 里可能含 Windows 非法字符，统一用 _sanitize_filename 风格清一下
+            import re as _re
+            preferred = _re.sub(r'[\\/:*?"<>|]', "", preferred).strip()
+            if len(preferred) > 80:
+                preferred = preferred[:80]
+            fallback_base = preferred or (video.aweme_id or "untitled")
+            # 临时目录内重命名
+            new_name = fallback_base + cand_ext
+            new_path = os.path.join(cand_dir, new_name)
+            # 临时目录也可能存在重复（极少，但要防）
+            i = 1
+            _np = new_path
+            while os.path.exists(_np):
+                _np = os.path.join(cand_dir, f"{fallback_base}-{i}{cand_ext}")
+                i += 1
+            try:
+                os.rename(candidate, _np)
+                self.logger(f"  yt-dlp 输出名为「{cand_name}」，兜底重命名为：{os.path.basename(_np)}")
+                candidate = _np
+            except OSError as e:
+                self.logger(f"  （非致命）兜底重命名失败，继续用原名移动：{e}")
 
         # 成功：把成品 move 到 output/douyin/（同盘原子 move；跨盘就 copy+delete）
         self.logger(f"✅ yt-dlp 完成，exit={rc}，找到临时成品：{candidate}")

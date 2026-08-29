@@ -1171,13 +1171,15 @@ class PetWindow(QWidget):
         self._crawler_worker: CrawlerWorker | DouyinLoginWorker | DouyinCrawlWorker | None = None
 
         # 非模态浮层（内置 QLabel，避免独立 Popup 留屏、叠层、GC 不及时导致的残留遮罩）
-        # _floating_notice:  1.2s 自动消失的短提示（替代原来的 QMessageBox Popup）
-        # _task_overlay:     爬虫等长任务时"停在宠物上方不动"的进度浮层，任务未完成时持续显示文案
+        # _floating_notice:  1~2s 自动消失的短提示（一次性，不阻塞事件循环）
+        # _task_overlay:     爬虫等长任务时的"持久状态浮层"，任务未完成时持续显示
         self._floating_notice: Optional[_FloatingLabel] = None
         self._task_overlay: Optional[_FloatingLabel] = None
-        # 当前长任务浮层的"锚点偏好"——任务入口先改这里，之后 _on_crawler_log 每次更新文案
-        # 时不传 anchor，就会沿用这个锚点，不会出现「入口放右下角，日志一更新又回到宠物头顶」
+        # 当前长任务浮层的"锚点偏好"
         self._task_overlay_anchor: str = "above_pet"
+        # —— 长任务浮层的状态机：_task_stage 用来防止同一个阶段重复刷屏
+        #    只有当 log 触发了"新阶段"，才会更新浮层文案。旧阶段再次出现的 log 直接忽略。
+        self._task_stage: str = ""
 
         # 初始化
         self._init_ui()
@@ -1317,8 +1319,9 @@ class PetWindow(QWidget):
             except Exception:
                 pass
             self._task_overlay = None
-        # 任务结束把锚点复位，避免下一个普通任务意外沿用了「右下角」
+        # 任务结束复位锚点 & 阶段状态
         self._task_overlay_anchor = "above_pet"
+        self._task_stage = ""
 
     # ======================== 状态管理 ========================
 
@@ -1567,7 +1570,19 @@ class PetWindow(QWidget):
     # ---------- 抖音 ----------
 
     def _douyin_login(self):
-        """在 QThread 里开浏览器引导扫码登录（GUI 弹窗提醒，不依赖终端）。"""
+        """在 QThread 里开浏览器引导扫码登录（单一弹窗 + 统一入口收尾）。
+
+        设计：
+          * 扫码引导对话框：非模态 show()，不是 modal exec()。
+            对话框内部有「确认登录完成」+「取消」按钮；但不依赖这两个按钮也能走通流程。
+          * Worker 侧每秒轮询一次：用户在 Chrome 里登录成功（头像出现）后，worker 会自动检测到，
+            此时：
+              - 立刻关闭正在显示的"扫码引导"对话框
+              - 立刻关闭右下角任务浮层
+              - 弹出 1 条"登录成功"轻提示（notice，2s 自动关）
+              （不再额外弹第二个"登录成功"对话框，避免堆叠）
+          * 只有「用户在对话框里自己点了确认」的场景，才额外弹一个确认对话框告诉用户「已成功」。
+        """
         if self._crawler_worker is not None and self._crawler_worker.isRunning():
             QMessageBox.information(self, "提示", "已有后台任务在运行，请稍候再试。")
             return
@@ -1577,12 +1592,13 @@ class PetWindow(QWidget):
         w.log.connect(self._on_crawler_log)
         w.failed.connect(self._on_crawler_failed)
 
-        # 用户扫码完成后，UI 弹"我已登录"对话框；点击确定后 allow_proceed() 让线程继续
+        # —— 扫码引导对话框的引用：存实例，登录成功自动关闭时方便调 close() ——
+        qr_box_ref: list[QMessageBox] = []
+
         def on_user_action(text: str):
-            # 遮罩文案先更新一下，让用户知道程序在等他操作
-            # 登录阶段：浮层丢到屏幕右下角，避免盖住 Chrome 正中央的二维码
+            # 浮层：右下角提示
             self._task_overlay_show(
-                "请在弹出的 Chrome 中扫码登录，完成后回到本窗口点「确认登录完成」",
+                "请在弹出的 Chrome 中扫码登录…",
                 anchor="screen_bottom_right",
             )
             try:
@@ -1592,6 +1608,7 @@ class PetWindow(QWidget):
                 )
             except Exception:
                 pass
+            # 非模态 show()，不阻塞事件循环
             box = QMessageBox(self)
             box.setWindowTitle("抖音：扫码登录")
             box.setText(text)
@@ -1599,31 +1616,73 @@ class PetWindow(QWidget):
             box.setStandardButtons(QMessageBox.Ok | QMessageBox.Cancel)
             box.button(QMessageBox.Ok).setText("确认登录完成")
             box.button(QMessageBox.Cancel).setText("取消")
-            if box.exec() == QMessageBox.Ok:
-                w.allow_proceed()
-                # 保存 Cookie 阶段：保持右下角（Chrome 还在切页，屏幕正中央还可能有滑块验证等）
-                self._task_overlay_show("正在检测登录状态并保存 Cookie…", anchor="screen_bottom_right")
+            box.setAttribute(Qt.WA_DeleteOnClose, False)
+            box.setModal(False)
+            box.show()
+            qr_box_ref.append(box)
+
+            def on_clicked(btn):
+                if box.button(QMessageBox.Ok) is btn:
+                    w.allow_proceed()
+                    # 用户手动确认的同时也提示一下正在保存
+                    self._task_overlay_show("正在检测登录状态并保存 Cookie…", anchor="screen_bottom_right")
+                elif box.button(QMessageBox.Cancel) is btn:
+                    # 取消：worker 会在超时后因未检测到登录态 → failed；这里只关 UI
+                    box.close()
+
+            box.buttonClicked.connect(on_clicked)
 
         w.user_action_required.connect(on_user_action)
 
-        def ok():
-            # 非模态成功提示（show，不阻塞 Qt 事件循环，宠物可拖/右键）
-            box = QMessageBox(self)
-            box.setWindowTitle("抖音登录成功")
-            box.setIcon(QMessageBox.Information)
-            box.setStandardButtons(QMessageBox.Ok)
-            box.setText(
-                "Cookie 已保存到 data/douyin_cookies.(json|txt)\n"
-                "之后爬抖音就不需要再扫码了。过期后再到 拓展功能 → 抖音 → 登录/重新登录 操作一次即可。"
-            )
-            box.setAttribute(Qt.WA_DeleteOnClose, True)
-            box.show()
+        def on_ok(trigger: str):
+            """登录成功的统一收尾。trigger ∈ {auto, manual, already}"""
 
-        w.finished_ok.connect(ok)
+            # 1) 关掉"扫码引导"对话框（如果还开着）
+            if qr_box_ref:
+                for b in qr_box_ref:
+                    try:
+                        b.close()
+                    except Exception:
+                        pass
+                qr_box_ref.clear()
+
+            # 2) 关掉任务浮层（不再显示「保存 Cookie 中…」等旧文案）
+            self._task_overlay_hide()
+
+            # 3) 根据不同触发方式给用户不同反馈
+            if trigger == "already":
+                # 打开浏览器时就已是登录态：轻提示 1.6s
+                self._show_notice("检测到已有登录态，已保存 Cookie。", duration_ms=1600)
+            elif trigger == "auto":
+                # 自动检测到用户扫完登录成功：轻提示 1.8s，不弹阻塞对话框
+                self._show_notice("✅ 已检测到登录成功，Cookie 已保存。", duration_ms=1800)
+            elif trigger == "manual":
+                # 用户手动点「确认登录完成」：给 1 条非模态确认提示框
+                box = QMessageBox(self)
+                box.setWindowTitle("抖音登录成功")
+                box.setIcon(QMessageBox.Information)
+                box.setStandardButtons(QMessageBox.Ok)
+                box.setText(
+                    "Cookie 已保存到 data/douyin_cookies.(json|txt)\n"
+                    "之后爬抖音就不需要再扫码了。过期后再到 拓展功能 → 抖音 → 登录/重新登录 操作一次即可。"
+                )
+                box.setAttribute(Qt.WA_DeleteOnClose, True)
+                box.show()
+
+        w.finished_ok.connect(on_ok)
         w.failed.connect(lambda *_: self._task_overlay_hide())
-        w.finished_ok.connect(lambda: self._task_overlay_hide())
+        # 失败时也把扫码引导对话框关掉，避免用户在失败后还对着空弹窗发呆
+        def on_failed(_):
+            if qr_box_ref:
+                for b in qr_box_ref:
+                    try:
+                        b.close()
+                    except Exception:
+                        pass
+                qr_box_ref.clear()
+        w.failed.connect(on_failed)
         w.start()
-        # 启动浏览器阶段也放右下角：Chrome 一弹出就是正中央，宠物头顶浮层会刚好压住二维码区域
+
         self._task_overlay_show("正在启动抖音浏览器…", anchor="screen_bottom_right")
         self._show_notice("抖音登录引导已启动", duration_ms=1400)
 
@@ -1735,23 +1794,82 @@ class PetWindow(QWidget):
 
     # ---------- 通用日志/结果回调 ----------
 
+    # 阶段 → 浮层文案 的映射表。条目按"流程上出现的先后顺序"排列。
+    # 注意：顺序很重要——因为 _task_stage 只能往前走，
+    # 排在前面的阶段在日志里重复出现也不会回滚覆盖后面的文案。
+    # 匹配规则：key（第一个元素）是"消息里包含哪个子串就命中这个阶段"。
+    _CRAWLER_STAGE_RULES: list[tuple[str, str, str]] = [
+        # (msg_contains_substr, stage_name, overlay_text)
+        # —— 登录 / 浏览器启动阶段 ——
+        ("启动浏览器",         "dy_login_browser",  "抖音浏览器启动中…"),
+        ("启动抖音浏览器",     "dy_login_browser",  "抖音浏览器启动中…"),
+        ("启动抖音爬取任务",   "dy_crawl_browser",  "抖音爬取浏览器启动中…"),
+        ("正在启动浏览器",     "dy_login_browser",  "抖音浏览器启动中…"),
+        ("页面打开成功",       "dy_login_qr",       "等待扫码登录…"),
+        ("浏览器已打开并跳转", "dy_login_qr",       "请在 Chrome 中扫码登录…"),
+        ("便携版 Chrome 已在", "dy_login_qr",       "请在 Chrome 中扫码登录…"),
+        ("当前已处于登录态",   "dy_login_save",     "已登录，保存 Cookie…"),
+        ("检测登录状态并保存 Cookie", "dy_login_save", "保存 Cookie 中…"),
+        ("刷新 Cookie",       "dy_crawl_save",     "刷新登录态…"),
+        ("登录成功，Cookie 已保存", "dy_login_done",  "✅ 抖音登录成功"),
+
+        # —— 列表爬取阶段 ——
+        ("打开个人主页，获取最新视频列表", "dy_crawl_list",  "正在获取视频列表…"),
+        ("导航到个人主页",   "dy_crawl_list",     "加载 UP 主个人主页…"),
+        ("首屏 document complete", "dy_crawl_list", "等待作品渲染…"),
+        ("等待作品 a",        "dy_crawl_list",     "等待作品卡片渲染…"),
+        ("解析到卡片",        "dy_crawl_list_done","已解析视频列表…"),
+        ("解析后保留的作品",  "dy_crawl_list_done","视频列表就绪"),
+        ("作品列表拿到",      "dy_crawl_list_done","✅ 视频列表已取到"),
+        ("共获取",            "dy_crawl_list_done","视频列表已获取"),
+        ("作品已拿到",        "dy_crawl_list_done","✅ 视频列表就绪"),
+
+        # —— 下载阶段 ——
+        ("开始调用 yt-dlp",   "dy_crawl_dl_start", "调用 yt-dlp 下载中…"),
+        ("进入下载阶段",      "dy_crawl_dl_start", "yt-dlp 下载中…"),
+        ("yt-dlp 会实时",     "dy_crawl_dl_start", "下载中（yt-dlp 实时回显）"),
+        ("下载结束",          "dy_crawl_dl_done",  "下载完成"),
+
+        # —— B 站通用阶段 ——
+        ("正在启动 B 站爬虫", "bili_start",        "B站爬虫启动中…"),
+        ("B 站首页加载完毕",  "bili_ready",        "已进入UP主投稿页"),
+        ("爬取第",            "bili_crawl",        "B站爬取稿件中…"),
+        ("解析到视频信息",    "bili_done",         "B站视频信息已取到"),
+        ("开始调用 yt-dlp 下载", "bili_dl_start",  "B站下载中（yt-dlp）"),
+        ("下载完成",          "bili_dl_done",      "✅ B站下载完成"),
+    ]
+
     def _on_crawler_log(self, msg: str):
-        """爬虫进度日志：打印到 Terminal，同时同步更新任务浮层文案（只看关键步骤、不叠文字）。"""
+        """爬虫进度日志：打印到 Terminal，同时按「阶段映射表」同步更新任务浮层。
+
+        关键点：
+          * 每个阶段名（如 dy_login_qr）只允许更新一次浮层；
+            后续同阶段的 log 只打印不更新浮层，避免旧信息覆盖新信息。
+          * 阶段顺序按 STAGE_RULES 里出现的顺序；
+            已经走到了后续阶段，再出现的日志不会把浮层拉回早期文案。
+        """
         print("[爬虫]", msg)
-        # 关键步骤关键字过滤 → 同步到浮层（全部同步会闪瞎眼）
-        important = any(k in msg for k in (
-            "浏览器", "登录", "Cookie", "保存", "扫码",
-            "打开个人主页", "获取最新视频", "共获取",
-            "开始调用", "下载", "yt-dlp",
-            "个人主页", "作品",
-            "启动", "启动中",
-        ))
-        if important:
-            # 浮层宽度有限，限制 30 字中文左右，超出末尾…
-            short = msg.strip()
-            if len(short) > 38:
-                short = short[:36] + "…"
-            self._task_overlay_show(short)
+
+        # —— 阶段映射：从后往前匹配（越靠后越精确，优先命中）——
+        #   例："登录成功，Cookie 已保存"包含"登录"也包含"保存 Cookie"，但我们要取后者。
+        matched_stage: str | None = None
+        matched_text: str | None = None
+        for substr, stage_name, overlay_text in reversed(type(self)._CRAWLER_STAGE_RULES):
+            if substr in msg:
+                matched_stage = stage_name
+                matched_text = overlay_text
+                break
+
+        if matched_stage is None or matched_text is None:
+            return
+
+        # 同一个阶段重复出现 → 不覆盖浮层
+        # （避免"刷新 Cookie…"日志在"保存Cookie中…"后面重复出现导致浮层回滚）
+        if matched_stage == self._task_stage:
+            return
+
+        self._task_stage = matched_stage
+        self._task_overlay_show(matched_text)
 
     def _on_crawler_ok(self, info):
         """B 站爬虫成功完成：非模态提示 + 资源管理器高亮选中文件（不阻塞 Qt，宠物可拖）。"""

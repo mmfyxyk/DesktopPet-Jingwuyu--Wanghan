@@ -34,25 +34,26 @@ from ..download_history import (
 class DouyinLoginWorker(QThread):
     """引导一次扫码登录，完成后保存 cookie。
 
-    用法：
-        w = DouyinLoginWorker()
-        w.log.connect(print)
-        w.user_action_required.connect(show_popup_modal)   # 让用户看到 Chrome 并手动扫码
-        w.finished_ok.connect(lambda: QMessageBox.information(..., "登录成功"))
-        w.failed.connect(lambda msg: QMessageBox.warning(..., msg))
-        w.start()
+    信号：
+        finished_ok(str)  登录成功。参数 = 触发方式:
+                            "auto"   = 用户在 Chrome 里登录后被我们的 1s 轮询自动检测到
+                            "manual" = 用户在扫码确认对话框里点「确认登录完成」
+                            "already"= 打开浏览器时就已经是登录态（无需扫码）
+        failed(str)       登录失败
+        log(str)          日志（打印到 Terminal + 同步任务浮层文案）
+        user_action_required(str)   需要用户扫码时触发。UI 弹一个非阻塞的"扫码引导对话框"
+                                     （对话框本身只是告知 + 提供"我已完成"按钮；不依赖对话框关闭
+                                      也能自动检测登录成功）
     """
 
-    finished_ok = Signal()
+    finished_ok = Signal(str)     # 参数见上文
     failed = Signal(str)
     log = Signal(str)
-    # 需要用户在 Chrome 扫码时，UI 线程弹一个"请在浏览器里扫码，完成后点我继续"的确认框
-    # UI 确认后槽调用 allow_proceed()
     user_action_required = Signal(str)   # 参数：提示文案
 
     def __init__(
         self,
-        headless: bool = False,      # 登录阶段强制非无头，不然用户没法扫
+        headless: bool = False,
         proxy: str | None = None,
         parent=None,
     ):
@@ -62,41 +63,65 @@ class DouyinLoginWorker(QThread):
         self._allow = False
 
     def allow_proceed(self) -> None:
-        """UI 侧在用户扫码完成并点击对话框"我已登录"后调用。"""
+        """UI 侧在用户点击对话框「确认登录完成」后调用。"""
         self._allow = True
 
     def run(self) -> None:
         driver = None
+        # —— 登录成功的触发方式：manual / auto / already（失败时保持 None）——
+        trigger: str | None = None
         try:
+            import time as _t
             crawler = DouyinCrawler(headless=self._headless, proxy=self._proxy, logger=self.log.emit)
             self.log.emit("正在启动浏览器（抖音专用用户资料目录）…")
 
-            # 第一步：打开 **前台最大化** 浏览器，跳首页；用户扫码必须看得见页面
             driver = crawler._open_browser(foreground=True)
             driver.get("https://www.douyin.com/")
 
-            # 命中"非法用户"等坏页 → 立刻失败，不让用户白等
             try:
                 crawler._detect_fatal_page(driver)
             except DouyinLoginRequired as e:
                 self.failed.emit(str(e))
                 return
 
-            # 如果一打开就是登录态，直接保存
-            if crawler._check_logged_in(driver):
+            # —— 辅助函数：升级判定 ——
+            #   若当前命中宽松 True，最多再给 10 秒看能不能升级到强 True；
+            #   能则返回 True，不能返回 False（继续等用户扫码/过验证）
+            def _upgrade_to_strong() -> bool:
+                for _ in range(10):
+                    try:
+                        if crawler._check_logged_in(driver, strong=True):
+                            return True
+                    except Exception:
+                        pass
+                    _t.sleep(1)
+                return False
+
+            # 路径 1：打开时就已登录（必须 strong=True 才承认；否则视为"残留过期cookie"，继续进入扫码流程）
+            if crawler._check_logged_in(driver, strong=True):
                 crawler._dump_cookies(driver)
                 self.log.emit("当前已处于登录态，已直接保存 Cookie。")
-                self.finished_ok.emit()
+                self.finished_ok.emit("already")
                 return
+            # 宽松命中但强命中失败 → 提示用户：profile里有cookie但实际上没真正登录，让用户重新扫码
+            if crawler._check_logged_in(driver, strong=False):
+                self.log.emit(
+                    "检测到 Profile 里存在 Cookie 但 UI 未显示个人区域（头像/消息），"
+                    "可能是登录态已过期或浏览器需要刷新。将继续引导你重新扫码登录。"
+                )
+                # 尝试主动刷新一下（有时刷新后就显示"未登录"按钮，便于用户直接扫）
+                try:
+                    driver.refresh()
+                    _t.sleep(2.0)
+                except Exception:
+                    pass
 
-            # 主动让二维码/登录面板显形：先处理"同意协议"遮挡 → 点"登录" → 切到"扫码登录"tab
             self.log.emit("页面打开成功，现在尝试自动让二维码面板出来（若你已经能看到二维码/登录弹窗可忽略本段）…")
             try:
                 crawler._try_show_login_qr_or_panel(driver)
             except Exception as e:
                 self.log.emit(f"（非致命）尝试自动弹出登录面板失败：{type(e).__name__}: {e}")
 
-            # 未登录 → 通知 UI 弹提示框，让用户在前台 Chrome 里扫码
             self.log.emit("浏览器已打开并跳转到抖音首页，请在浏览器中完成登录（扫码 / 短信）。")
             self._allow = False
             self.user_action_required.emit(
@@ -104,35 +129,73 @@ class DouyinLoginWorker(QThread):
                 "程序已自动尝试点「登录」按钮 / 切「扫码登录」；如果你仍看不到二维码：\n"
                 "  · 先勾选/点掉左下角「已阅读并同意用户协议和隐私政策」\n"
                 "  · 再点右上角「登录」→ 左侧或底部选「扫码登录」。\n\n"
-                "操作步骤：\n"
-                "  1. 在弹出的 Chrome 里用抖音 App 扫码登录；如果没弹二维码就点右上角「登录」按钮。\n"
-                "  2. 登录成功后，浏览器右上角会变成你的头像/昵称。\n"
-                "  3. 回到这个窗口，点【确认登录完成】。"
+                "请在 Chrome 中用抖音 App 扫码登录。\n"
+                "▸ 登录完成后（Chrome 右上角变成头像），程序会自动检测到并关闭本窗口。\n"
+                "▸ 如果自动检测超时，可手动点下方「确认登录完成」。"
             )
 
-            # 等用户点确认 / 或自动检测登录成功（最多 10 分钟）
-            for _ in range(600):
+            # 路径 2：用户手动触发 vs 自动检测（最多 10 分钟）
+            manually_triggered = False
+            _iters = 600
+            _idx = 0
+            while _idx < _iters:
+                _idx += 1
+
+                # 用户点了"确认登录完成" → 先查强判定是否真过，不过继续等
                 if self._allow:
-                    break
-                try:
-                    if crawler._check_logged_in(driver):
-                        self._allow = True
+                    self._allow = False  # 重置，避免死循环
+                    if crawler._check_logged_in(driver, strong=True):
+                        manually_triggered = True
                         break
+                    # 强判定未过：可能用户扫了码但还在二次验证/滑块，尝试升级
+                    if crawler._check_logged_in(driver, strong=False) and _upgrade_to_strong():
+                        manually_triggered = True
+                        break
+                    # 依然没过 → 继续循环，提示用户再看一眼
+                    self.log.emit(
+                        "你点了「确认登录完成」但程序仍未检测到有效登录。"
+                        "请回到 Chrome 看一下右上角：是不是仍显示「登录」按钮？"
+                        "如果有滑块/短信验证，请在 Chrome 里完成后再点确认。"
+                    )
+                    self.msleep(500)
+                    continue
+
+                # 自动检测：先宽松命中 → 升级为强判定才 break
+                try:
+                    if crawler._check_logged_in(driver, strong=False):
+                        # 宽松命中 → 尝试升级（最多 10s）
+                        if _upgrade_to_strong():
+                            manually_triggered = False
+                            break
+                        # 10s 后仍未升级 → 扫风控后继续等
+                        try:
+                            crawler._emit_anti_spam_if_any(
+                                driver, stage=f"扫码等待中(宽松命中但强判定未过, {_idx}s)"
+                            )
+                        except Exception:
+                            pass
                 except Exception:
                     pass
                 self.msleep(1000)
 
-            if not crawler._check_logged_in(driver):
+            # 最终判定：必须 strong=True
+            if not crawler._check_logged_in(driver, strong=True):
+                # 失败前扫一次风控，给出明确提示
+                try:
+                    crawler._emit_anti_spam_if_any(driver, stage="DouyinLoginWorker 最终判定失败")
+                except Exception:
+                    pass
                 self.failed.emit(
                     "未检测到登录成功。\n"
                     "确认方式：登录完成后，Chrome 右上角「登录」按钮会消失、换成你的头像。\n"
-                    "看到头像后回这个弹窗点【确认登录完成】。"
+                    "若出现文字点选 / 滑块 / 短信验证等安全验证，请先在 Chrome 里通过，然后再点确认。"
                 )
                 return
 
             crawler._dump_cookies(driver)
+            trigger = "manual" if manually_triggered else "auto"
             self.log.emit("✅ 登录成功，Cookie 已保存到 data/douyin_cookies.(json|txt)")
-            self.finished_ok.emit()
+            self.finished_ok.emit(trigger)
         except DouyinLoginRequired as e:
             self.failed.emit(f"环境未就绪：{e}")
         except Exception as e:
