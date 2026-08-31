@@ -1,0 +1,20 @@
+# assets-collect/ 工具链依赖。
+#
+# 本目录的工作流（个人合法素材生产，不走 bundle 解包/逆向）：
+#   1. Win+Alt+R 录屏（或 OBS 游戏捕获无损录）
+#   2. 达芬奇裁剪抠透明背景 → 导出 PNG 序列
+#   3. frames_to_gif.py 把 PNG 序列合成为 3:4 统一尺寸 GIF
+#   4. video_to_frames_and_gif.py（可选）：没装达芬奇时，直接对 mp4 抽帧 + 合 GIF
+#
+# 安装：
+#   pip install -r requirements.txt
+#   另外确保系统 PATH 能找到 ffmpeg.exe（或放在 support/ffmpeg.exe 旁边；yt-dlp 同）
+#
+# 历史遗留说明：
+#   UnityPy / pycryptodome / frida / psutil / tqdm
+#   这些是最初打算解《美女，请别影响我成仙》的加密 .bundle 所需。
+#   2026-08 确认该影游 8727/8735 个 bundle 使用自定义 AES 加密、
+#   IL2CPP 后端 SetAssetBundleDecryptKey 无符号且 key 未落在可扫描内存区，
+#   因此正式放弃该方案，对应脚本和爆破依赖均已删除/卸载。
+
+Pillow>=9.5.0    # frames_to_gif.py 合成 GIF（支持透明 disposal=2）；check_image_sizes.py 读图片尺寸

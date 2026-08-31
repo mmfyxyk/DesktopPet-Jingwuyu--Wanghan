@@ -51,3 +51,14 @@ support/*
 # 系统文件
 .DS_Store
 Thumbs.db
+
+# —— 本地私有资源提取工具链（assets-collect/）：永远不公开 ——
+# 整个 output/ 下的导出物（游戏原始资源，法律敏感，体积大）
+assets-collect/output/
+assets-collect/bundles-local/
+assets-collect/inventory.json
+assets-collect/.tmp/
+# 小脚本本身可以入库（README / requirements / 两个 .py 已经在 assets-collect/.gitignore 里说明）
+# 若未来要把整个 assets-collect/ 也排除掉（连脚本都不进公开仓库），再把下行取消注释：
+# assets-collect/
+

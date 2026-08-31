@@ -41,6 +41,13 @@ from .config import (
     save_proxy_config,
     resolve_runtime_proxy,
     clear_proxy_config_file,
+    AppConfig,
+    PET_HEIGHT_DEFAULT,
+    PET_HEIGHT_MIN,
+    PET_HEIGHT_MAX,
+    load_app_config,
+    save_app_config,
+    clear_app_config_file,
 )
 
 
@@ -965,15 +972,22 @@ class ClearPrivacyDialog(QDialog):
         self.setWindowTitle("清除本地隐私数据")
         self.resize(560, 460)
 
-        # 先把 4 项路径准备好
+        # 先把 5 项路径准备好
         dc = DouyinCrawler()
         locs = dc.login_data_locations()
+        from .config import SETTINGS_JSON
         self._items: list[ClearPrivacyDialog.Item] = [
             ClearPrivacyDialog.Item(
                 "proxy_json",
                 "代理配置文件 data/proxy.json",
                 "手动模式下写入的 Host / Port / 账号 / 密码（若勾选了明文存盘）",
                 PROXY_JSON,
+            ),
+            ClearPrivacyDialog.Item(
+                "settings_json",
+                "显示偏好设置 data/settings.json",
+                "记录你改的「窗口置顶」「宠物显示高度」。\n删除后下次启动会自动恢复 240 px / 默认置顶。",
+                SETTINGS_JSON,
             ),
             ClearPrivacyDialog.Item(
                 "douyin_cookie_json",
@@ -1065,6 +1079,11 @@ class ClearPrivacyDialog(QDialog):
                 ok.append(f"[代理配置] {PROXY_JSON}")
             else:
                 failed.append(f"[代理配置] 删不掉 {PROXY_JSON}（可能被占用）")
+        if "settings_json" in picked_keys:
+            if clear_app_config_file():
+                ok.append(f"[显示设置] data/settings.json（下次启动自动恢复默认显示偏好）")
+            else:
+                failed.append(f"[显示设置] data/settings.json —— 删除失败")
         # 抖音 3 处：直接复用 DouyinCrawler.clear_login_data 但只删选中的
         if "douyin_profile_dir" in picked_keys or "douyin_cookie_json" in picked_keys or "douyin_cookie_txt" in picked_keys:
             # clear_login_data 是"全删"三选三的；为了只删勾选，这里拆开来删
@@ -1120,23 +1139,97 @@ class ClearPrivacyDialog(QDialog):
             self.accept()
 
 
+class PetSizeSettingsDialog(QDialog):
+    """右键菜单「设置 → 调整宠物大小…」对话框。
+
+    用一个 QSpinBox 直接选 120~480 px 高度；下面三个预设按钮一键填常用档位（180 / 240 / 320）。
+    预览文字会实时告知「改完后物品高度 ≈ 多少」。
+    确定后写入 data/settings.json 并由 PetWindow 即时生效。
+    """
+
+    def __init__(self, current_height: int, parent=None):
+        super().__init__(parent)
+        self.setWindowTitle("调整宠物大小")
+        self.setMinimumWidth(360)
+
+        form = QFormLayout(self)
+
+        self._height_spin = QSpinBox(self)
+        self._height_spin.setRange(PET_HEIGHT_MIN, PET_HEIGHT_MAX)
+        self._height_spin.setSuffix(" px")
+        self._height_spin.setSingleStep(10)
+        self._height_spin.setValue(max(PET_HEIGHT_MIN, min(PET_HEIGHT_MAX, int(current_height))))
+        self._height_spin.setToolTip(
+            f"范围 {PET_HEIGHT_MIN} - {PET_HEIGHT_MAX} 像素。\n"
+            f"默认 {PET_HEIGHT_DEFAULT} px（= 3:4 素材缩到 180×240 显示）。\n"
+            f"物品图会按宠物高度的 1/3 自动联动缩放，不用单独设置。"
+        )
+
+        # 预设档位
+        presets_row = QHBoxLayout()
+        for label, value in (("小 180", 180), ("中 240（默认）", 240), ("大 320", 320)):
+            btn = QPushButton(label)
+            btn.clicked.connect(lambda _checked=False, v=value: self._height_spin.setValue(v))
+            presets_row.addWidget(btn)
+
+        # 预览提示
+        self._preview = QLabel(self._make_preview_text(self._height_spin.value()))
+        self._preview.setStyleSheet("color: #555; font-size: 9pt;")
+        self._height_spin.valueChanged.connect(
+            lambda v: self._preview.setText(self._make_preview_text(v))
+        )
+
+        # 按钮组
+        buttons = QDialogButtonBox(
+            QDialogButtonBox.Ok | QDialogButtonBox.Cancel | QDialogButtonBox.RestoreDefaults,
+            parent=self,
+        )
+        buttons.button(QDialogButtonBox.RestoreDefaults).clicked.connect(
+            lambda: self._height_spin.setValue(PET_HEIGHT_DEFAULT)
+        )
+        buttons.accepted.connect(self.accept)
+        buttons.rejected.connect(self.reject)
+
+        form.addRow("宠物显示高度：", self._height_spin)
+        form.addRow("预设档位：", presets_row)
+        form.addRow("预览", self._preview)
+        form.addRow(buttons)
+
+    # ------------------------------------------------------------------ internals
+
+    def _make_preview_text(self, pet_h: int) -> str:
+        item_h = max(40, int(pet_h / 3))
+        ratio = "3:4 素材 → 约 {w}×{h}".format(w=int(pet_h * 3 / 4), h=pet_h)
+        return (
+            f"人物（{ratio}）\n"
+            f"骨头 / 葡萄汁 / 豆腐 等物品 → 高约 {item_h} px（联动自动缩放）"
+        )
+
+    @property
+    def selected_height(self) -> int:
+        return int(self._height_spin.value())
+
+
 class PetWindow(QWidget):
     """宠物主窗口"""
 
     def __init__(self):
         super().__init__()
 
+        # 启动时从 data/settings.json 加载 UI 显示设置
+        self._app_cfg: AppConfig = load_app_config()
+
         # 启动时从 data/proxy.json 加载代理配置
         proxy_cfg = load_proxy_config()
         global CRAWLER_PROXY
         CRAWLER_PROXY = resolve_runtime_proxy(proxy_cfg)
 
-        # 窗口设置：无边框、透明背景、置顶
-        self.setWindowFlags(
-            Qt.FramelessWindowHint |
-            Qt.WindowStaysOnTopHint |
-            Qt.Tool
-        )
+        # 窗口设置：无边框 + 透明背景 + Qt.Tool（任务栏不占位）。
+        # 置顶默认开，但用户可以在菜单「设置 → 窗口置顶」里切换，所以这里只给一个初值。
+        flags = Qt.FramelessWindowHint | Qt.Tool
+        if self._app_cfg.always_on_top:
+            flags |= Qt.WindowStaysOnTopHint
+        self.setWindowFlags(flags)
         self.setAttribute(Qt.WA_TranslucentBackground)
 
         # 用于显示动画的 Label
@@ -1148,6 +1241,10 @@ class PetWindow(QWidget):
         self._interaction = InteractionManager(
             self._state_machine, self._animator, self
         )
+
+        # 先把尺寸 apply 到 animator（确保 _init_ui.play(IDLE) 按用户设置的高度显示）
+        from .pet_animator import apply_app_config as _apply_animator_cfg
+        _apply_animator_cfg(self._app_cfg)
 
         # 拖拽状态
         self._dragging = False
@@ -1181,9 +1278,79 @@ class PetWindow(QWidget):
         #    只有当 log 触发了"新阶段"，才会更新浮层文案。旧阶段再次出现的 log 直接忽略。
         self._task_stage: str = ""
 
+        # 记录窗口置顶的 QAction（勾选状态与当前设置联动）
+        self._action_always_on_top: Optional[QAction] = None
+
         # 初始化
         self._init_ui()
         self._start_idle()
+
+    # ======================================================================
+    # 显示设置：窗口置顶 + 宠物高度；持久化到 data/settings.json，即时生效
+    # ======================================================================
+
+    def _save_app_cfg_and_notice(self, tip: str) -> None:
+        """存盘 + 右上角轻提示（成功写入文件路径）。"""
+        path = save_app_config(self._app_cfg)
+        self._show_notice(f"✅ {tip}（已保存到 data/settings.json）", duration_ms=1600)
+        _ = path  # 写入路径已在 _show_notice 或之后 UI 上显式展示过
+
+    def _toggle_always_on_top(self, checked: bool) -> None:
+        """切换窗口是否置顶（用户勾选后立刻生效，存盘保留下次启动）。"""
+        self._app_cfg.always_on_top = bool(checked)
+
+        # 改 WindowStaysOnTopHint 必须重新 setWindowFlags，Qt 不支持单独动态开关这一位后不 hide/show。
+        visible = self.isVisible()
+        old_pos = self.pos()
+
+        flags = self.windowFlags()
+        if checked:
+            flags |= Qt.WindowStaysOnTopHint
+        else:
+            flags &= ~Qt.WindowStaysOnTopHint
+        self.setWindowFlags(flags)
+        # setWindowFlags 后窗口会被 Qt 隐藏，手动 move 回原位 + show
+        self.move(old_pos)
+        if visible:
+            self.show()
+
+        if self._action_always_on_top is not None:
+            self._action_always_on_top.setChecked(checked)
+        self._save_app_cfg_and_notice(f"窗口置顶 = {'开' if checked else '关'}")
+
+    def _open_pet_size_settings(self) -> None:
+        """打开「调整宠物大小」对话框。确定后立刻按新高度重绘宠物 + 窗口大小 + 存盘。"""
+        dlg = PetSizeSettingsDialog(current_height=self._app_cfg.pet_height, parent=self)
+        if dlg.exec() != QDialog.Accepted:
+            return
+        new_h = dlg.selected_height
+        if new_h == self._app_cfg.pet_height:
+            return  # 没变就不搞一遍
+
+        old_center_x = self.x() + self.width() // 2
+        old_bottom = self.y() + self.height()
+
+        # 1) 写 AppConfig + 应用到 animator 运行时
+        self._app_cfg.pet_height = new_h
+        from .pet_animator import apply_app_config as _apply_animator_cfg
+        _apply_animator_cfg(self._app_cfg)
+
+        # 2) 对当前显示的帧即时应用新尺寸
+        self._animator.apply_sizes_now(self._app_cfg.pet_height, self._app_cfg.item_height)
+
+        # 3) 跟随 label 调整窗口固定大小
+        label_size = self._label.size()
+        self.setFixedSize(label_size)
+
+        # 4) 位置：按"人物的脚底 / 水平中线"对齐旧位置，避免改大小时人物在屏幕上"跳"
+        new_x = max(0, old_center_x - self.width() // 2)
+        new_y = max(0, old_bottom - self.height())
+        self.move(new_x, new_y)
+
+        # 5) 持久化 + 提示
+        self._save_app_cfg_and_notice(
+            f"宠物显示高度 = {self._app_cfg.pet_height} px"
+        )
 
     def _init_ui(self):
         """初始化 UI"""
@@ -1466,6 +1633,32 @@ class PetWindow(QWidget):
         # 彩蛋：ihan 粉丝站
         action_ihan = QAction("ihan 粉丝站 ✨", self)
 
+        # ---------- 设置：窗口显示偏好（持久化 settings.json）----------
+        settings_menu = menu.addMenu("设置")
+
+        self._action_always_on_top = QAction("窗口置顶", self)
+        self._action_always_on_top.setCheckable(True)
+        self._action_always_on_top.setChecked(self._app_cfg.always_on_top)
+        self._action_always_on_top.setToolTip(
+            "打开后，宠物窗口永远压在浏览器/游戏等最上层；\n"
+            "关掉后，她会像普通窗口一样被其它窗口盖住。"
+        )
+        settings_menu.addAction(self._action_always_on_top)
+
+        action_size = QAction("调整宠物大小…", self)
+        action_size.setToolTip(
+            "调整宠物显示高度（默认 240 px）；\n"
+            f"允许范围 {PET_HEIGHT_MIN}~{PET_HEIGHT_MAX} px，物品图自动按 1/3 高度联动。"
+        )
+        settings_menu.addAction(action_size)
+
+        settings_menu.addSeparator()
+        action_reset_size = QAction("恢复默认设置", self)
+        action_reset_size.setToolTip(
+            f"重置为：窗口置顶=开 / 宠物高度={PET_HEIGHT_DEFAULT} px，并立即写入 data/settings.json。"
+        )
+        settings_menu.addAction(action_reset_size)
+
         # 仓库子菜单（关于项目仓库本身的信息、作者链接、彩蛋）
         repo_menu = menu.addMenu("关于此项目")
         action_github = QAction("GitHub", self)
@@ -1483,6 +1676,7 @@ class PetWindow(QWidget):
         menu.addAction(action_feed)
         menu.addSeparator()
         menu.addMenu(extras_menu)
+        menu.addMenu(settings_menu)
         menu.addSeparator()
         menu.addMenu(repo_menu)
         menu.addSeparator()
@@ -1500,6 +1694,10 @@ class PetWindow(QWidget):
         action_clear_privacy.triggered.connect(self._open_clear_privacy)
         action_open_data_dir.triggered.connect(self._open_data_dir)
         action_open_output_dir.triggered.connect(self._open_output_dir)
+        # 设置：显示偏好
+        self._action_always_on_top.toggled.connect(self._toggle_always_on_top)
+        action_size.triggered.connect(self._open_pet_size_settings)
+        action_reset_size.triggered.connect(self._reset_app_settings)
         # 关于此项目
         action_github.triggered.connect(self._open_github)
         action_gitee.triggered.connect(self._open_gitee)
@@ -1507,6 +1705,49 @@ class PetWindow(QWidget):
         action_quit.triggered.connect(self.close)
 
         menu.exec(pos)
+
+    # ------------------------------------------------------------------ 设置：重置
+
+    def _reset_app_settings(self) -> None:
+        """一键恢复默认设置：窗口置顶=开 / 宠物高度=240px。"""
+        confirm = QMessageBox.question(
+            self,
+            "恢复默认设置",
+            "确认把显示设置恢复成出厂默认？\n\n"
+            "  · 窗口置顶：开\n"
+            f"  · 宠物高度：{PET_HEIGHT_DEFAULT} px\n\n"
+            "（只影响 settings.json，不会动你的登录数据、下载历史、素材）",
+        )
+        if confirm != QMessageBox.Yes:
+            return
+
+        self._app_cfg = AppConfig().clamp()
+        # 1. 应用宠物高度
+        from .pet_animator import apply_app_config as _apply_animator_cfg
+        _apply_animator_cfg(self._app_cfg)
+        # 2. 对当前帧重绘 + 窗口大小 + 位置对齐
+        self._animator.apply_sizes_now(self._app_cfg.pet_height, self._app_cfg.item_height)
+        label_size = self._label.size()
+        self.setFixedSize(label_size)
+        # 3. 置顶 flag 按新 cfg 重置（用现有 _toggle 路径，但先强制 setChecked 会触发 toggled）
+        if self._action_always_on_top is not None:
+            # 注意：blockSignals 临时打断，避免再保存一次 save_app_config（下方统一保存）
+            self._action_always_on_top.blockSignals(True)
+            self._action_always_on_top.setChecked(self._app_cfg.always_on_top)
+            self._action_always_on_top.blockSignals(False)
+        visible = self.isVisible()
+        old_pos = self.pos()
+        flags = self.windowFlags()
+        if self._app_cfg.always_on_top:
+            flags |= Qt.WindowStaysOnTopHint
+        else:
+            flags &= ~Qt.WindowStaysOnTopHint
+        self.setWindowFlags(flags)
+        self.move(old_pos)
+        if visible:
+            self.show()
+        # 4. 统一持久化 + 提示
+        self._save_app_cfg_and_notice("已恢复默认显示设置")
 
     def _open_github(self):
         """用系统默认浏览器打开 GitHub 仓库"""
