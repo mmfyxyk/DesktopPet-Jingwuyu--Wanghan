@@ -87,8 +87,12 @@ Source: "{#DistPetDir}\pet.exe"; DestDir: "{app}"; Flags: ignoreversion
 ; —— PyInstaller 依赖（含打包进 _internal/assets 的动画资源）——
 Source: "{#DistPetDir}\_internal\*"; DestDir: "{app}\_internal"; Flags: ignoreversion recursesubdirs createallsubdirs
 
-; —— 项目自带的 support/README.md（仅文档，不含实际外部工具）——
-Source: "{#ProjectRoot}\support\README.md"; DestDir: "{app}\support"; Flags: ignoreversion
+; —— 外部工具目录（ffmpeg/Chrome 等，打包时自动从项目 support/ 一起拷贝）——
+; 递归拷贝整个 support/ 目录，用户安装后无需再手动放入
+; Excludes: 排除 Chrome 用户数据（Profile-* 含 cookies/历史记录等，不能带进安装包）
+Source: "{#ProjectRoot}\support\*"; DestDir: "{app}\support"; \
+    Excludes: "\Chrome\Profile-*\*,\Chrome\Default\*,\Chrome\*\Cookies,\Chrome\*\History,\Chrome\*\Preferences"; \
+    Flags: ignoreversion recursesubdirs createallsubdirs
 
 [Dirs]
 ; —— 创建运行时目录（用户数据/输出目录，不删用户已有内容）——

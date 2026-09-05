@@ -8,7 +8,9 @@
     ├── pet.exe                    # 主程序（PyInstaller 产物）
     ├── _internal/                # PySide6 / Python 依赖
     ├── assets/                   # 已打包进 exe，但额外保留一份方便用户替换素材（可选）
-    ├── support/                  # 外部工具（用户后续手动放入 ffmpeg/Chrome）
+    ├── support/                  # 外部工具（打包时自动从项目 support/ 一起拷贝）
+    │   ├── ffmpeg/ffmpeg.exe     # 视频合并（开发机准备好→直接拷过来）
+    │   ├── Chrome/chrome.exe     # 便携 Chrome（抖音登录用）
     │   └── README.md             # 外部工具说明
     ├── data/                     # 运行时数据（自动创建）
     ├── output/                   # 爬虫输出（自动创建）
@@ -36,7 +38,7 @@ PROJECT_ROOT = SCRIPTS_DIR.parent
 DIST_DIR = PROJECT_ROOT / 'dist'
 PET_DIST_DIR = DIST_DIR / 'pet'
 RELEASE_DIR = PROJECT_ROOT / 'release'
-SUPPORT_DIR_SRC = PROJECT_ROOT / 'support'        # 项目里的 support/（仅含 README）
+SUPPORT_DIR_SRC = PROJECT_ROOT / 'support'        # 项目里的 support/（含 ffmpeg/Chrome 等外部工具）
 
 # 默认版本号：若 git 有 tag 用 tag，否则用日期
 DEFAULT_VERSION = datetime.now().strftime('%Y%m%d')
@@ -54,6 +56,41 @@ def _print_ok(msg: str) -> None:
 
 def _print_err(msg: str) -> None:
     print(f"    [失败] {msg}", file=sys.stderr)
+
+
+# 拷贝 support/ 时排除的目录/文件——防止把开发机的 Chrome 登录态（cookies、
+# 历史记录、缓存等）带进发布包泄露隐私
+_EXCLUDE_DIRS = {
+    'profile-douyin',      # 抖音爬虫登录后的 Chrome 用户资料（含 cookies/历史/缓存）
+    'profile-*',           # 万一以后有其它 Profile-* 也一并排除
+    'default',             # Chrome 默认 Profile（开发机残留）
+    'cache', 'code cache',  # 缓存目录
+    'gpucache',
+    '__pycache__',
+    '.git',
+}
+_EXCLUDE_FILES = {
+    '.gitkeep',
+    'thumbs.db', 'desktop.ini',
+}
+
+
+def _support_ignore(directory: str, names: list[str]) -> set[str]:
+    """shutil.copytree 的 ignore 回调：排除 Chrome 用户数据等敏感内容"""
+    excluded = set()
+    for name in names:
+        lower = name.lower()
+        # 排除 Profile-* 模式
+        if lower.startswith('profile-') or lower in _EXCLUDE_DIRS:
+            excluded.add(name)
+        elif lower in _EXCLUDE_FILES:
+            excluded.add(name)
+        # 排除 cookies / 登录态等敏感文件（如果出现在 Chrome 根目录）
+        elif lower in ('cookies', 'cookies-journal', 'login data',
+                       'login data-journal', 'web data', 'history',
+                       'history-journal', 'preferences', 'secure preferences'):
+            excluded.add(name)
+    return excluded
 
 
 def get_version_from_git() -> str:
@@ -119,22 +156,21 @@ def prepare_staging(version: str) -> Path:
             shutil.copy2(item, target)
         _print_ok(f"  {item.name}")
 
-    # —— 拷贝 support/（含 README，不含实际外部工具） ——
-    _print_step("拷贝 support/ 模板")
+    # —— 拷贝 support/（整个目录，含 ffmpeg/Chrome 等外部工具） ——
+    # 排除 Chrome 用户数据（Profile-Douyin 含 cookies/历史记录等，不能带进发布包）
+    _print_step("拷贝 support/ 外部工具目录（排除 Chrome 用户数据）")
     support_dst = app_root / 'support'
     if SUPPORT_DIR_SRC.is_dir():
-        # 只拷 README，不拷 Chrome/ffmpeg 等大体积内容（用户自行放入）
-        support_dst.mkdir(exist_ok=True)
-        for item in SUPPORT_DIR_SRC.iterdir():
-            if item.name.lower() == 'readme.md':
-                shutil.copy2(item, support_dst / item.name)
-                _print_ok(f"  拷贝 support/{item.name}")
+        shutil.copytree(SUPPORT_DIR_SRC, support_dst, ignore=_support_ignore)
+        # 统计拷贝了哪些内容
+        for item in sorted(support_dst.iterdir()):
+            _print_ok(f"  support/{item.name}")
+        # 确保 Chrome/ 目录存在（即使用户数据被排除，目录结构要保留）
+        chrome_dst = support_dst / 'Chrome'
+        chrome_dst.mkdir(exist_ok=True)
     else:
         support_dst.mkdir(exist_ok=True)
-        _print_ok("support 源目录不存在，仅创建空目录")
-
-    # 写入 support 子目录占位提示
-    _write_support_placeholders(support_dst)
+        _print_ok("support 源目录不存在，仅创建空目录（请开发机先准备好 support/ffmpeg + support/Chrome）")
 
     # —— 创建 data/、output/ 占位 ——
     _print_step("创建 data/、output/ 占位目录")
@@ -155,28 +191,6 @@ def prepare_staging(version: str) -> Path:
     _write_portable_readme(app_root, version)
 
     return app_root
-
-
-def _write_support_placeholders(support_dir: Path) -> None:
-    """在 support 下创建 ffmpeg/、Chrome/ 占位说明"""
-    ffmpeg_dir = support_dir / 'ffmpeg'
-    ffmpeg_dir.mkdir(exist_ok=True)
-    (ffmpeg_dir / '请把 ffmpeg.exe 放到这里.txt').write_text(
-        "请到 https://www.gyan.dev/ffmpeg/builds/ 下载 Windows build，\n"
-        "把 ffmpeg.exe 解压到本目录（support/ffmpeg/ffmpeg.exe）。\n"
-        "爬虫下载抖音/B站视频时需要调用 ffmpeg 合并音视频流。\n",
-        encoding='utf-8',
-    )
-
-    chrome_dir = support_dir / 'Chrome'
-    profile_douyin = chrome_dir / 'Profile-Douyin'
-    profile_douyin.mkdir(parents=True, exist_ok=True)
-    (chrome_dir / '请把便携 Chrome 放到这里.txt').write_text(
-        "抖音爬虫需要使用便携版 Chrome，独立 Profile 防止污染用户日常浏览器。\n"
-        "建议放置 support/Chrome/chrome.exe（便携版主程序）。\n"
-        "Profile-Douyin/ 目录会由程序首次登录时自动创建。\n",
-        encoding='utf-8',
-    )
 
 
 def _write_launcher_bat(app_root: Path) -> None:
@@ -200,15 +214,15 @@ def _write_portable_readme(app_root: Path, version: str) -> None:
         "【启动方法】\n"
         "  双击「启动宠物.bat」或直接双击 pet.exe\n\n"
         "【首次使用必看】\n"
-        "  1. 爬虫功能需要外部工具：\n"
-        "     - support/ffmpeg/    放入 ffmpeg.exe（视频合并）\n"
-        "     - support/Chrome/    放入便携 Chrome（抖音登录）\n"
+        "  1. 爬虫所需的外部工具已内置，无需额外下载：\n"
+        "     - support/ffmpeg/ffmpeg.exe   视频合并（已附带）\n"
+        "     - support/Chrome/chrome.exe   便携 Chrome（已附带，抖音登录用）\n"
         "  2. 首次使用抖音爬虫：右键 → 拓展功能 → 抖音 → 登录（扫码）\n\n"
         "【目录说明】\n"
         "  - pet.exe        主程序\n"
         "  - _internal/     依赖文件（不要删）\n"
         "  - assets/        动画资源（可替换为你的素材）\n"
-        "  - support/       外部工具（按需手动放入）\n"
+        "  - support/       外部工具（ffmpeg + Chrome，已附带）\n"
         "  - data/          运行时配置（自动生成）\n"
         "  - output/        爬虫下载的视频（自动生成）\n\n"
         "【隐私】\n"

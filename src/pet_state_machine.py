@@ -22,6 +22,40 @@ class PetState(Enum):
     PLAYING = "playing"       # 玩耍（预留）
     ANGRY = "angry"           # 生气（预留）
 
+    # ===========================================================================
+    # 以下为「框架文档 v3 §3.1 提到的可扩展动作 + 常见情绪/交互状态」占位枚举。
+    # —— 新的代码块，当前 **整体注释掉（COMMENTED OUT）**，暂不生效 ——
+    # 素材到位后，做 3 件事就能启用：
+    #   1. 把下面 '''...''' 三引号打开 / 或把每行前的 # 去掉；
+    #   2. 在 src/pet_animator.py ASSET_MAP 里写对应映射（已在 animator 里同步写好占位）；
+    #   3. 在 src/main_window.py 菜单里对应 QAction 解注释 + 连到 InteractionManager。
+    # 【素材暂代方案】：在 animator 的扩展 ASSET_MAP 块里，全部先用
+    #   ``试.gif``（动画） / ``试.png``（静态图） 作为试验占位素材。
+    # ---------------------------------------------------------------------------
+    # 扩展状态（框架 v3 §3.1 "可添加：洗澡、生病、开心 等" + 情绪系统 §2.2）
+    #
+    # HAPPY       = "happy"         # 开心（情绪系统：高情绪值触发）
+    # SAD         = "sad"           # 委屈 / 难过
+    # SICK        = "sick"          # 生病（咳嗽、无精打采）
+    # BATHING     = "bathing"       # 洗澡（泡泡 / 搓澡动作）
+    # PATTED      = "patted"        # 被摸头（左键点击宠物，交互反馈 §2.2）
+    # POKED       = "poked"         # 被戳一下（左键点击其它部位/连点）
+    # SHY         = "shy"           # 害羞（被夸 / 被送东西）
+    # SURPRISED   = "surprised"     # 惊讶（弹窗 / 新东西出现）
+    # YAWN        = "yawn"          # 打哈欠（IDLE 太久、从 SLEEPING 起来）
+    # DRINKING    = "drinking"      # 喝水（饮料投喂，§2.2 可扩展更多投喂物品）
+    # SINGING     = "singing"       # 唱歌（语音反馈彩蛋）
+    # DANCING     = "dancing"       # 跳舞（B 站/抖音 新视频发布触发）
+    # RUNNING     = "running"       # 小跑（情绪值高时替代 WALKING）
+    # CRYING      = "crying"        # 哭泣 / 掉眼泪（情绪值太低）
+    # STRETCHING  = "stretching"    # 伸懒腰（SLEEPING → IDLE 过渡）
+    # LAUGHING    = "laughing"      # 大笑（摸头被挠到痒点 / 笑话彩蛋）
+    # ZONING_OUT  = "zoning_out"    # 放空 / 发呆（IDLE 持续太久）
+    # NAPPING     = "napping"       # 打盹（浅睡，跟 SLEEPING 深浅两档）
+    # EATING_SNACK= "eating_snack"  # 吃零食（冰淇淋/奶茶，§2.2 更多食物类型）
+    # READING     = "reading"       # 看书 / 玩手机（挂机状态）
+    # ===========================================================================
+
 
 # 状态是否可被打断（用于判断是否允许强制切换状态）
 INTERRUPTIBLE = {
@@ -36,6 +70,37 @@ INTERRUPTIBLE = {
     PetState.PLAYING: True,
     PetState.ANGRY: True,
 }
+
+# =============================================================================
+# 扩展状态对应的 INTERRUPTIBLE 表（COMMENTED OUT，与上面的扩展枚举配套）
+# —— 全部暂代素材，打开上面扩展枚举后再去掉这里的注释即可 ——
+#
+# EXT_INTERRUPTIBLE = {
+#     # PetState.HAPPY:        True,   # 开心可被打断
+#     # PetState.SAD:          True,
+#     # PetState.SICK:         True,
+#     # PetState.BATHING:      False,  # 洗澡过程别打断（跟 EATING 同优先级）
+#     # PetState.PATTED:       True,   # 被摸头动作短，可随时打断
+#     # PetState.POKED:        True,
+#     # PetState.SHY:          True,
+#     # PetState.SURPRISED:    True,
+#     # PetState.YAWN:         True,   # 打哈欠随时可切
+#     # PetState.DRINKING:     False,  # 喝水动作完成后再走
+#     # PetState.SINGING:      True,
+#     # PetState.DANCING:      True,
+#     # PetState.RUNNING:      True,
+#     # PetState.CRYING:       True,
+#     # PetState.STRETCHING:   True,
+#     # PetState.LAUGHING:     True,
+#     # PetState.ZONING_OUT:   True,
+#     # PetState.NAPPING:      True,   # 打盹可叫醒
+#     # PetState.EATING_SNACK: False,  # 吃零食也属于"吃东西"，别中途打断
+#     # PetState.READING:      True,
+# }
+# # 合并回 INTERRUPTIBLE（启用扩展状态后取消下面注释即可一次性并进去）
+# # INTERRUPTIBLE.update(EXT_INTERRUPTIBLE)
+# =============================================================================
+
 
 
 class StateMachine(QObject):

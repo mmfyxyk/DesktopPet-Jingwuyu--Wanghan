@@ -1586,6 +1586,117 @@ class PetWindow(QWidget):
         action_ask = QAction("求投喂", self)
         action_feed = QAction("喂食", self)
 
+        # ======================================================================
+        # 扩展动作（右键直接可点的交互）占位 —— **整块注释掉（COMMENTED OUT）暂不生效**
+        #
+        # 来源：
+        #   · 框架文档 v3 §3.1 "可添加：洗澡、生病、开心 等"
+        #   · §4 菜单里原先删掉的「摸头/对话」占位（框架 §4.7 说明："摸头 / 对话 / 更多设置
+        #     留到素材到位后按需扩"）
+        #   · §2.2 "情绪系统 / 更多食物类型 / 触摸反馈"
+        #
+        # 启用方式：
+        #   1) 先打开 src/pet_state_machine.py 里 PetState 扩展枚举的注释；
+        #   2) 打开 src/pet_animator.py 里 _EXT_ASSET_MAP / _EXT_ITEM_IMAGES 的注释；
+        #   3) 打开 src/interaction.py 里扩展 start_* 的注释；
+        #   4) 最后把下面这一大段解注释，并把 triggered.connect 连到 self._interaction.xxx；
+        # 全部用试验素材（试.gif / 试_物品东西.png）暂代，解注释后不会崩。
+        # ----------------------------------------------------------------------
+        # # 子菜单「情绪 ▶」
+        # emotion_menu = menu.addMenu("情绪")
+        # action_emotion_happy     = QAction("开心", self)
+        # action_emotion_sad       = QAction("委屈/难过", self)
+        # action_emotion_sick      = QAction("生病", self)
+        # action_emotion_angry     = QAction("生气", self)      # 其实 PetState.ANGRY 已有
+        # action_emotion_shy       = QAction("害羞（被送礼物）", self)
+        # action_emotion_surprised = QAction("惊讶", self)
+        # action_emotion_crying    = QAction("哭泣", self)
+        # action_emotion_laughing  = QAction("大笑", self)
+        # emotion_menu.addAction(action_emotion_happy)
+        # emotion_menu.addAction(action_emotion_sad)
+        # emotion_menu.addAction(action_emotion_sick)
+        # emotion_menu.addAction(action_emotion_shy)
+        # emotion_menu.addAction(action_emotion_surprised)
+        # emotion_menu.addAction(action_emotion_crying)
+        # emotion_menu.addAction(action_emotion_laughing)
+        # # （ANGRY 已经在映射里有，这里留一条占位提醒）
+        # # emotion_menu.addAction(action_emotion_angry)
+        #
+        # # 子菜单「互动 ▶」：框架里原来的摸头 / 对话 占位 加回来
+        # inter_menu = menu.addMenu("互动")
+        # action_inter_patted  = QAction("摸头", self)        # 框架 §4 里之前说要删的占位，先回到这里当注释
+        # action_inter_poked   = QAction("戳一下", self)
+        # action_inter_talk    = QAction("对话（占位）", self)  # 对话暂无后端实现，仅占位
+        # action_inter_gift    = QAction("送礼物", self)
+        # inter_menu.addAction(action_inter_patted)
+        # inter_menu.addAction(action_inter_poked)
+        # inter_menu.addAction(action_inter_gift)
+        # inter_menu.addSeparator()
+        # inter_menu.addAction(action_inter_talk)
+        #
+        # # 子菜单「状态 ▶」：睡觉/打盹/放空等
+        # status_menu = menu.addMenu("状态")
+        # action_status_sleeping   = QAction("睡觉（深睡）", self)  # PetState.SLEEPING 已存在
+        # action_status_napping    = QAction("打盹（浅睡）", self)
+        # action_status_stretching = QAction("伸懒腰", self)
+        # action_status_yawn       = QAction("打哈欠", self)
+        # action_status_zoning     = QAction("放空/发呆", self)
+        # action_status_playing    = QAction("玩耍", self)         # PetState.PLAYING 已存在
+        # status_menu.addAction(action_status_playing)
+        # status_menu.addAction(action_status_sleeping)
+        # status_menu.addAction(action_status_napping)
+        # status_menu.addAction(action_status_stretching)
+        # status_menu.addAction(action_status_yawn)
+        # status_menu.addAction(action_status_zoning)
+        #
+        # # 子菜单「吃喝 ▶」：框架 §2.2 更多食物类型（吃猪蹄/豆腐已经在基础三件里，这里扩展零食饮料）
+        # food_menu = menu.addMenu("吃喝")
+        # action_food_snack   = QAction("吃零食（冰淇淋）", self)
+        # action_food_drink   = QAction("喝奶茶", self)
+        # action_food_singing = QAction("唱首歌", self)     # 顺便跟吃喝在同一块里，放麦克风道具
+        # food_menu.addAction(action_food_snack)
+        # food_menu.addAction(action_food_drink)
+        # food_menu.addSeparator()
+        # food_menu.addAction(action_food_singing)
+        #
+        # # 子菜单「彩蛋 ▶」：跳舞 / 跑步 / 看书玩手机（B 站/抖音新视频 / 挂机用）
+        # extra_menu2 = menu.addMenu("彩蛋")
+        # action_ext_dancing  = QAction("跳舞", self)
+        # action_ext_running  = QAction("小跑一下", self)
+        # action_ext_reading  = QAction("看书/玩手机（挂机）", self)
+        # action_ext_bathing  = QAction("洗澡", self)
+        # extra_menu2.addAction(action_ext_dancing)
+        # extra_menu2.addAction(action_ext_running)
+        # extra_menu2.addAction(action_ext_reading)
+        # extra_menu2.addSeparator()
+        # extra_menu2.addAction(action_ext_bathing)
+        #
+        # # —— 占位：上面这些动作的 triggered.connect（素材到位、InteractionManager 里
+        # #    start_xxx 解注释后，再把这一段取消注释即可）——
+        # # action_emotion_happy.triggered.connect(self._interaction.start_happy)
+        # # action_emotion_sad.triggered.connect(self._interaction.start_sad)
+        # # action_emotion_sick.triggered.connect(self._interaction.start_sick)
+        # # action_emotion_shy.triggered.connect(self._interaction.start_shy_gift)
+        # # action_emotion_surprised.triggered.connect(self._interaction.start_surprised)
+        # # action_emotion_crying.triggered.connect(self._interaction.start_crying)
+        # # action_emotion_laughing.triggered.connect(self._interaction.start_laughing)
+        # # action_inter_patted.triggered.connect(self._interaction.start_patted_head)
+        # # action_inter_poked.triggered.connect(self._interaction.start_poked)
+        # # action_inter_gift.triggered.connect(self._interaction.start_shy_gift)
+        # # action_status_napping.triggered.connect(self._interaction.start_napping)
+        # # action_status_stretching.triggered.connect(self._interaction.start_stretching)
+        # # action_status_yawn.triggered.connect(self._interaction.start_yawn)
+        # # action_status_zoning.triggered.connect(self._interaction.start_zoning_out)
+        # # action_food_snack.triggered.connect(self._interaction.start_eating_snack)
+        # # action_food_drink.triggered.connect(self._interaction.start_drinking)
+        # # action_food_singing.triggered.connect(self._interaction.start_singing)
+        # # action_ext_dancing.triggered.connect(self._interaction.start_dancing)
+        # # action_ext_running.triggered.connect(self._interaction.start_running)
+        # # action_ext_reading.triggered.connect(self._interaction.start_reading_phone)
+        # # action_ext_bathing.triggered.connect(self._interaction.start_bathing)
+        # # （SLEEPING / PLAYING 已经在基础状态机里有，只是还没挂菜单，要不要加菜单另说）
+        # ======================================================================
+
         # 拓展功能子菜单（DLC：爬虫等）
         extras_menu = menu.addMenu("拓展功能")
 

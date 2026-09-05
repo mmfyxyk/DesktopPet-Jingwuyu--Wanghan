@@ -80,6 +80,63 @@ ITEM_IMAGE = "试_物品东西.png"
 SOUND_FILE = "试.mp3"
 
 
+# =============================================================================
+# 扩展动作素材占位（框架 v3 §3.1 "可添加：洗澡、生病、开心 等" 共 20 条）
+# —— 新的代码块，**当前整块注释掉（COMMENTED OUT）**，暂不生效 ——
+# 全部用现有「试验素材 试.gif / 试.png / 试_物品东西.png / 试.mp3」暂代。
+# 启用步骤：
+#   1. 先在 src/pet_state_machine.py 里解除 PetState 扩展枚举的注释（会报错，因为
+#      ASSET_MAP 里还没有这些键 → 打开本块即可）；
+#   2. 把下面 # 开头的行解注释；ASSET_MAP.update() 一行默认会在解除注释的同时
+#      自动把 20 条映射加进现有 ASSET_MAP（不用手动改上面那 10 行）；
+#   3. 之后每替换一个正式素材（王涵_happy.gif 等），只需修改这里的
+#      filename 字段，其它文件不用动。
+# ---------------------------------------------------------------------------
+# _EXT_ASSET_MAP = {
+#     # —— 动画类：全部先用 试.gif 暂代 ——
+#     # PetState.HAPPY:        ("试.gif", "gif", 14),  # 开心（情绪高）
+#     # PetState.SAD:          ("试.gif", "gif", 8),   # 委屈/难过
+#     # PetState.SICK:         ("试.gif", "gif", 6),   # 生病（慢）
+#     # PetState.BATHING:      ("试.gif", "gif", 12),  # 洗澡
+#     # PetState.PATTED:       ("试.gif", "gif", 18),  # 被摸头（短动画）
+#     # PetState.POKED:        ("试.gif", "gif", 18),  # 被戳（短动画）
+#     # PetState.SHY:          ("试.gif", "gif", 10),  # 害羞
+#     # PetState.SURPRISED:    ("试.gif", "gif", 16),  # 惊讶
+#     # PetState.YAWN:         ("试.gif", "gif", 8),   # 打哈欠
+#     # PetState.DRINKING:     ("试.gif", "gif", 16),  # 喝水
+#     # PetState.SINGING:      ("试.gif", "gif", 12),  # 唱歌
+#     # PetState.DANCING:      ("试.gif", "gif", 16),  # 跳舞
+#     # PetState.RUNNING:      ("试.gif", "gif", 20),  # 小跑（快）
+#     # PetState.CRYING:       ("试.gif", "gif", 10),  # 哭泣
+#     # PetState.STRETCHING:   ("试.gif", "gif", 12),  # 伸懒腰
+#     # PetState.LAUGHING:     ("试.gif", "gif", 16),  # 大笑
+#     # PetState.ZONING_OUT:   ("试.gif", "gif", 4),   # 放空（最慢）
+#     # PetState.NAPPING:      ("试.gif", "gif", 5),   # 打盹
+#     # PetState.EATING_SNACK: ("试.gif", "gif", 18),  # 吃零食
+#     # PetState.READING:      ("试.gif", "gif", 8),   # 看书/玩手机
+# }
+# # 一次性合并到 ASSET_MAP（解除上面 20 条 + 下面这行注释即可生效）
+# # ASSET_MAP.update(_EXT_ASSET_MAP)
+#
+# # 扩展物品素材占位（框架 §2.2 "可扩展更多食物/物品"，仍先用 试_物品东西.png 暂代）
+# # 替换正式素材时，按"物品名=文件名"格式逐个改即可；交互函数里已预留按 key 取图的入口
+# # _EXT_ITEM_IMAGES = {
+# #     "bone":          "试_物品东西.png",  # 猪蹄 → 骨头（现有 EATING 产出）
+# #     "grape_juice":   "试_物品东西.png",  # 葡萄汁（现有 ASKING_FOOD 刷出来）
+# #     "tofu":          "试_物品东西.png",  # 豆腐（现有 FEEDING 产出）
+# #     "ice_cream":     "试_物品东西.png",  # 冰淇淋（EATING_SNACK 用）
+# #     "milk_tea":      "试_物品东西.png",  # 奶茶（DRINKING 用）
+# #     "phone":         "试_物品东西.png",  # 手机（READING 用）
+# #     "book":          "试_物品东西.png",  # 书（READING 用）
+# #     "gift_box":      "试_物品东西.png",  # 礼物盒（SHY 彩蛋触发）
+# #     "tissue":        "试_物品东西.png",  # 纸巾（CRYING 彩蛋）
+# #     "thermometer":   "试_物品东西.png",  # 体温计（SICK 彩蛋）
+# #     "soap_bubble":   "试_物品东西.png",  # 泡泡（BATHING 彩蛋）
+# #     "microphone":    "试_物品东西.png",  # 麦克风（SINGING 彩蛋）
+# # }
+# =============================================================================
+
+
 def _get_image_size(path: str) -> QSize:
     """通过 QImageReader 获取图片/GIF 原始尺寸（不加载完整文件）"""
     reader = QImageReader(path)

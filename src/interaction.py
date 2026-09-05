@@ -170,6 +170,129 @@ class InteractionManager:
 
         QTimer.singleShot(3000, self._spawn_tofu)
 
+    # ==========================================================================
+    # 扩展交互动作占位（框架 v3 §2.2 情绪系统 / 更多食物类型 / 触摸反馈）
+    # —— 新的代码块，**当前整块注释掉（COMMENTED OUT）**，暂不生效 ——
+    # 所有需要显示动画的地方都直接调 self.animator.play(对应PetState)，
+    # 由于 animator 里的扩展 ASSET_MAP 已用「试.gif / 试_物品东西.png」暂代，
+    # 解除下面注释后就算没有正式素材也不会崩，会显示试验素材。
+    # --------------------------------------------------------------------------
+    # def _spawn_item_by_key(self, item_key: str, duration_ms: int = 5000):
+    #     """扩展物品占位：统一用 _EXT_ITEM_IMAGES[item_key] 作为素材（暂代=试_物品东西.png）。
+    #
+    #     启用步骤（和 pet_animator.py 配套）：
+    #       1. 打开 animator 里 _EXT_ITEM_IMAGES 的注释；
+    #       2. 这里再实现"按 key 拿不同 pixmap"（animator 里再加一个
+    #          get_ext_item_pixmap(item_key) 就行，目前先用统一 get_item_pixmap 暂代）。
+    #     """
+    #     pixmap = self.animator.get_item_pixmap()   # 试验素材暂代：一张通用图
+    #     item = ItemWindow(item_key, pixmap, self.pet_window.pos())
+    #     item.show()
+    #     item.auto_hide(duration_ms)
+    #     self._active_items.append(item)
+    #
+    # # —— 情绪 / 表情类（只切状态 + 播放动画，不生产物品）——
+    # def start_happy(self):        # 开心
+    #     if not self.sm.transition_to(PetState.HAPPY): return
+    #     self.animator.play(PetState.HAPPY)
+    #     QTimer.singleShot(3000, lambda: (self.sm.transition_to(PetState.IDLE), self.animator.play(PetState.IDLE)))
+    #
+    # def start_sad(self):          # 委屈/难过
+    #     if not self.sm.transition_to(PetState.SAD): return
+    #     self.animator.play(PetState.SAD)
+    #     # 彩蛋：掉一张纸巾 🧻
+    #     QTimer.singleShot(1500, lambda: self._spawn_item_by_key("tissue"))
+    #
+    # def start_sick(self):         # 生病
+    #     if not self.sm.transition_to(PetState.SICK): return
+    #     self.animator.play(PetState.SICK)
+    #     QTimer.singleShot(1500, lambda: self._spawn_item_by_key("thermometer"))
+    #
+    # def start_bathing(self):      # 洗澡
+    #     if not self.sm.transition_to(PetState.BATHING): return
+    #     self.animator.play(PetState.BATHING)
+    #     QTimer.singleShot(2000, lambda: self._spawn_item_by_key("soap_bubble"))
+    #
+    # def start_patted_head(self):   # 被摸头（框架里原来的摸头占位，§4 v3 说明曾删掉）
+    #     if not self.sm.transition_to(PetState.PATTED): return
+    #     self.animator.play(PetState.PATTED)
+    #     QTimer.singleShot(1800, lambda: (self.sm.transition_to(PetState.HAPPY), self.animator.play(PetState.HAPPY)))
+    #
+    # def start_poked(self):        # 被戳
+    #     if not self.sm.transition_to(PetState.POKED): return
+    #     self.animator.play(PetState.POKED)
+    #     QTimer.singleShot(1200, lambda: (self.sm.transition_to(PetState.ANGRY), self.animator.play(PetState.ANGRY)))
+    #
+    # def start_shy_gift(self):     # 被送礼物 → 害羞（§2.2 可扩展更多投喂物品）
+    #     if not self.sm.transition_to(PetState.SHY): return
+    #     self.animator.play(PetState.SHY)
+    #     self._spawn_item_by_key("gift_box")
+    #
+    # def start_surprised(self):    # 惊讶
+    #     if not self.sm.transition_to(PetState.SURPRISED): return
+    #     self.animator.play(PetState.SURPRISED)
+    #
+    # def start_yawn(self):         # 打哈欠（SLEEPING → IDLE 过渡）
+    #     if not self.sm.transition_to(PetState.YAWN): return
+    #     self.animator.play(PetState.YAWN)
+    #     QTimer.singleShot(2500, lambda: (self.sm.transition_to(PetState.IDLE), self.animator.play(PetState.IDLE)))
+    #
+    # def start_drinking(self):     # 喝奶茶（框架 §2.2 更多投喂物品）
+    #     if not self.sm.transition_to(PetState.DRINKING): return
+    #     self.animator.play(PetState.DRINKING)
+    #     QTimer.singleShot(2500, lambda: self._spawn_item_by_key("milk_tea"))
+    #
+    # def start_singing(self):      # 唱歌（语音反馈）
+    #     if not self.sm.transition_to(PetState.SINGING): return
+    #     self.animator.play(PetState.SINGING)
+    #     self.animator.play_sound()    # 试验素材 试.mp3
+    #     self._spawn_item_by_key("microphone")
+    #
+    # def start_dancing(self):      # 跳舞（B 站/抖音新视频触发）
+    #     if not self.sm.transition_to(PetState.DANCING): return
+    #     self.animator.play(PetState.DANCING)
+    #
+    # def start_running(self):      # 小跑（需要和 WALKING 配合行走逻辑，这里先只切状态）
+    #     if not self.sm.transition_to(PetState.RUNNING): return
+    #     self.animator.play(PetState.RUNNING)
+    #
+    # def start_crying(self):       # 哭
+    #     if not self.sm.transition_to(PetState.CRYING): return
+    #     self.animator.play(PetState.CRYING)
+    #     QTimer.singleShot(1000, lambda: self._spawn_item_by_key("tissue"))
+    #
+    # def start_stretching(self):   # 伸懒腰
+    #     if not self.sm.transition_to(PetState.STRETCHING): return
+    #     self.animator.play(PetState.STRETCHING)
+    #     QTimer.singleShot(2500, lambda: (self.sm.transition_to(PetState.IDLE), self.animator.play(PetState.IDLE)))
+    #
+    # def start_laughing(self):     # 大笑
+    #     if not self.sm.transition_to(PetState.LAUGHING): return
+    #     self.animator.play(PetState.LAUGHING)
+    #     QTimer.singleShot(2500, lambda: (self.sm.transition_to(PetState.HAPPY), self.animator.play(PetState.HAPPY)))
+    #
+    # def start_zoning_out(self):   # 放空
+    #     if not self.sm.transition_to(PetState.ZONING_OUT): return
+    #     self.animator.play(PetState.ZONING_OUT)
+    #
+    # def start_napping(self):      # 打盹（浅睡）
+    #     if not self.sm.transition_to(PetState.NAPPING): return
+    #     self.animator.play(PetState.NAPPING)
+    #
+    # def start_eating_snack(self): # 吃零食（冰淇淋）
+    #     if not self.sm.transition_to(PetState.EATING_SNACK): return
+    #     self.animator.play(PetState.EATING_SNACK)
+    #     QTimer.singleShot(2500, lambda: self._spawn_item_by_key("ice_cream"))
+    #     QTimer.singleShot(3500, lambda: (self.sm.transition_to(PetState.IDLE), self.animator.play(PetState.IDLE)))
+    #
+    # def start_reading_phone(self):# 看书 / 玩手机（挂机）
+    #     if not self.sm.transition_to(PetState.READING): return
+    #     self.animator.play(PetState.READING)
+    #     # 试验素材暂代：手机 + 书各掉一张（暂时都用同一张占位）
+    #     QTimer.singleShot(500, lambda: self._spawn_item_by_key("phone"))
+    #     QTimer.singleShot(1200, lambda: self._spawn_item_by_key("book"))
+    # ==========================================================================
+
     def cleanup(self):
         """清理所有活跃物品"""
         for item in self._active_items:
