@@ -45,6 +45,9 @@ support/*
 *.mov
 *.mkv
 
+#素材文件夹
+assets/*
+
 # 日志
 *.log
 

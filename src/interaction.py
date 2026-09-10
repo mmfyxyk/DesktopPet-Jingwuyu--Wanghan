@@ -87,19 +87,27 @@ class InteractionManager:
         self.pet_window = pet_window
         self._active_items = []  # 当前活跃的物品窗口列表
 
+        # 连接动画播完信号 → 一次性动作播完后自动掉物品、回 IDLE
+        self.animator.animation_finished.connect(self._on_animation_finished)
+
+    def _on_animation_finished(self, state: PetState):
+        """一次性动画播完回调：根据状态决定下一步"""
+        if state == PetState.EATING:
+            self._spawn_bone()
+        elif state == PetState.FEEDING:
+            self._spawn_tofu()
+        # 其它状态暂时不需要播完回调
+
     def start_eating(self):
-        """吃东西流程：播放动画 → 生成骨头 → 回到待机"""
+        """吃东西流程：播放一次性动画 → 播完自动生成骨头 → 回待机"""
         if not self.sm.transition_to(PetState.EATING):
             return
-        self.animator.play(PetState.EATING)
-        self.animator.play_sound()
-
-        # 播放一段时间后生成骨头
-        QTimer.singleShot(3000, self._spawn_bone)
+        self.animator.play_one_shot(PetState.EATING)
+        self.animator.play_sound(PetState.EATING)
 
     def _spawn_bone(self):
         """生成骨头物品"""
-        pixmap = self.animator.get_item_pixmap()
+        pixmap = self.animator.get_item_pixmap(PetState.EATING)
         item = ItemWindow("骨头", pixmap, self.pet_window.pos())
         item.show()
         item.auto_hide(5000)
@@ -116,7 +124,7 @@ class InteractionManager:
         self.animator.play(PetState.ASKING_FOOD)
 
         # 生成葡萄汁物品（可拖拽到宠物身上）
-        pixmap = self.animator.get_item_pixmap()
+        pixmap = self.animator.get_item_pixmap(PetState.ASKING_FOOD)
         item = ItemWindow("葡萄汁", pixmap, self.pet_window.pos())
         item.item_clicked.connect(self._on_food_given)
         item.show()
@@ -126,7 +134,7 @@ class InteractionManager:
         self._ask_timer = QTimer.singleShot(10000, self._on_ask_timeout)
 
     def _on_food_given(self, item_name):
-        """用户点击/拖拽葡萄汁到宠物身上 → 进入喂食"""
+        """用户点击/拖拽葡萄汁到宠物身上 → 进入喂食（一次性动画 → 播完出豆腐）"""
         # 关闭葡萄汁物品
         for item in self._active_items[:]:
             if item.item_name == "葡萄汁":
@@ -134,19 +142,18 @@ class InteractionManager:
                 self._active_items.remove(item)
 
         self.sm.transition_to(PetState.FEEDING)
-        self.animator.play(PetState.FEEDING)
-
-        # 播放一段时间后生成豆腐
-        QTimer.singleShot(3000, self._spawn_tofu)
+        self.animator.play_one_shot(PetState.FEEDING)
+        self.animator.play_sound(PetState.FEEDING)
 
     def _spawn_tofu(self):
         """生成豆腐物品"""
-        pixmap = self.animator.get_item_pixmap()
+        pixmap = self.animator.get_item_pixmap(PetState.FEEDING)
         item = ItemWindow("豆腐", pixmap, self.pet_window.pos())
         item.show()
         item.auto_hide(5000)
         self._active_items.append(item)
 
+        # 回到待机
         self.sm.transition_to(PetState.IDLE)
         self.animator.play(PetState.IDLE)
 
@@ -163,12 +170,11 @@ class InteractionManager:
             self.animator.play(PetState.IDLE)
 
     def start_feeding(self):
-        """喂食流程：喂用户豆腐，给用户豆腐图片"""
+        """喂食流程：播放一次性动画 → 播完自动生成豆腐 → 回待机"""
         if not self.sm.transition_to(PetState.FEEDING):
             return
-        self.animator.play(PetState.FEEDING)
-
-        QTimer.singleShot(3000, self._spawn_tofu)
+        self.animator.play_one_shot(PetState.FEEDING)
+        self.animator.play_sound(PetState.FEEDING)
 
     # ==========================================================================
     # 扩展交互动作占位（框架 v3 §2.2 情绪系统 / 更多食物类型 / 触摸反馈）

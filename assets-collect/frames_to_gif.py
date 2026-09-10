@@ -36,6 +36,32 @@ except ImportError:
     raise SystemExit("× 需要 Pillow。先激活 venv 后 pip install Pillow，或用 conda 装。")
 
 
+def _flatten_to_gif_alpha(img: Image.Image, threshold: int) -> Image.Image:
+    """把 RGBA 的半透明边缘硬切成 GIF 能吃的 1-bit 透明。
+
+    GIF 规范：整帧里只有 **一个颜色索引** 可以被标记为透明（transparency=index），
+    没有"半透明"概念。PNG 里抗锯齿产生的半透明边缘（alpha 在 1~254 之间的像素）
+    如果直接交给 PIL 转调色板，会被映射成任意一个不透明色（通常是黑色/最近色），
+    这就是合成后边缘发黑的根源。
+
+    处理策略：
+      1. alpha < threshold → 直接标为全透明（R=G=B=0，稍后 GIF 把 0 号色当透明）
+      2. alpha >= threshold → 保留原色（全不透明）
+
+    这样 GIF 的调色板里 0 号色就是纯透明，边缘要么干净消失要么完整保留，
+    不会出现随机的黑边/白边。
+    """
+    if img.mode != "RGBA":
+        return img
+
+    threshold = max(0, min(255, threshold))
+    r, g, b, a = img.split()
+    # 阈值二值化：alpha < threshold 的全部归零（→ GIF 透明色）
+    a_bin = a.point(lambda v: 255 if v >= threshold else 0)
+    img = Image.merge("RGBA", (r, g, b, a_bin))
+    return img
+
+
 def _parse_wxh(s: str) -> tuple[int, int]:
     s = (s or "").strip().lower().replace("*", "x").replace("×", "x")
     if not s:
@@ -94,6 +120,11 @@ def main() -> None:
                     help="非透明模式下留白的背景色（white/black/#f0f0f0，默认 white）")
     ap.add_argument("--transparent", action="store_true",
                     help="保留透明背景（输出 alpha 透明 GIF，桌宠背景会是真正透明）")
+    ap.add_argument("--alpha-threshold", type=int, default=128,
+                    help="GIF 透明二值化阈值（0~255，默认 128）。GIF 只有 1-bit 透明，"
+                         "半透明边缘像素会被硬切：alpha >= 阈值 → 不透明，< 阈值 → 全透明。"
+                         "值调大会保留更多半透明像素为实心（但边缘可能发黑）；调小会更干净"
+                         "但头发丝等细毛可能消失。建议 100~160 之间微调。")
     ap.add_argument("--loop", type=int, default=0, help="0=无限循环，1=播一次")
     args = ap.parse_args()
 
@@ -167,6 +198,10 @@ def main() -> None:
         # 处理强制统一尺寸
         if force_size:
             im = _paste_to_canvas(im, size_w, size_h, out_mode, bg_color)
+
+        # ★ GIF 只有 1-bit 透明，半透明边缘必须先硬切，否则边缘会被 PIL 映射成黑边
+        if args.transparent:
+            im = _flatten_to_gif_alpha(im, args.alpha_threshold)
 
         # repeat each
         for _ in range(max(1, args.repeat_each)):

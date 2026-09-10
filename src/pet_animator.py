@@ -22,6 +22,28 @@ from .pet_state_machine import PetState
 from .resource_manager import get_asset_path
 
 
+def _get_gif_original_fps(path: str) -> float:
+    """读取 GIF 原始帧率（从第一帧的 delay 推算）。
+
+    QMovie.setSpeed() 只接受"百分比"，100 = 按 GIF 内置 delay 播放。
+    要想精确按某个 fps 播，得先知道 GIF 原始 fps，再算百分比。
+    返回值：GIF 原始帧率（float），读取失败返回 10.0（兜底）。
+    """
+    try:
+        from PIL import Image
+        img = Image.open(path)
+        if getattr(img, "n_frames", 1) <= 1:
+            return 10.0
+        img.seek(0)
+        # GIF 每帧 delay 单位是毫秒，1000/delay = fps
+        delay_ms = img.info.get("duration", 100)
+        if delay_ms <= 0:
+            return 10.0
+        return 1000.0 / delay_ms
+    except Exception:
+        return 10.0
+
+
 # ======================== 默认显示尺寸（实际值来自 AppConfig，运行时可改） ========================
 #
 # 保留这些常量作为：
@@ -62,22 +84,36 @@ def apply_app_config(cfg) -> None:
 
 # 状态 → 素材文件映射（后期替换正式素材时改这里）
 ASSET_MAP = {
-    PetState.IDLE:        ("试.gif", "gif", 10),    # (文件名, 类型, FPS)
+    PetState.IDLE:        ("idle/IDLE_净无欲全身像.gif", "gif", 20),    # (文件名, 类型, FPS)
     PetState.WALKING:     ("试.gif", "gif", 15),
-    PetState.DRAGGING:    ("试.png", "png", 0),
+    PetState.DRAGGING:    ("dragging/dragging1.gif", "gif", 29),
     PetState.RELEASED:    ("试.gif", "gif", 15),
     PetState.EATING:     ("试.gif", "gif", 20),
     PetState.ASKING_FOOD: ("试.gif", "gif", 12),
-    PetState.FEEDING:     ("试.gif", "gif", 20),
+    PetState.FEEDING:     ("feeding/feeding.gif", "gif", 20),
     PetState.SLEEPING:    ("试.gif", "gif", 5),
     PetState.PLAYING:     ("试.gif", "gif", 15),
     PetState.ANGRY:       ("试.gif", "gif", 12),
 }
 
-# 物品素材
-ITEM_IMAGE = "试_物品东西.png"
-# 音效素材
-SOUND_FILE = "试.mp3"
+# 音效映射：按状态取对应音效（没列的状态不播音效）
+SOUND_MAP = {
+    PetState.EATING:      "试.mp3",               # 吃东西 → 咀嚼声
+    PetState.SLEEPING:    "试.mp3",               # 睡觉 → 呼噜
+    PetState.ANGRY:       "试.mp3",               # 生气 → 哼
+    PetState.ASKING_FOOD: "试.mp3",               # 求投喂 → 肚子咕咕
+    PetState.FEEDING:     "试.mp3",               # 喂食 → 开心吃
+    PetState.DRAGGING:    "dragging/dragging1.mp3",  # 拖拽 → 被抓起的音效
+    # IDLE / WALKING / RELEASED / PLAYING → 不需要音效
+}
+
+# 物品图映射：按状态取对应物品图（没列的状态不掉物品）
+ITEM_MAP = {
+    PetState.EATING:      "items/猪蹄.png",      # 骨头
+    PetState.ASKING_FOOD: "items/葡萄汁.png",      # 葡萄汁
+    PetState.FEEDING:     "items/豆腐.png",      # 豆腐
+    # IDLE / WALKING / SLEEPING / ANGRY / PLAYING / DRAGGING → 不掉物品
+}
 
 
 # =============================================================================
@@ -208,29 +244,72 @@ class PetAnimator(QObject):
     # ------------------------------------------------------------------ 播放
 
     def play(self, state: PetState):
-        """根据状态播放对应动画"""
+        """根据状态播放对应动画（循环播放，用于 IDLE/WALKING 等挂机状态）"""
+        self._play(state, one_shot=False)
+
+    def play_one_shot(self, state: PetState):
+        """播放一次动画（播完自动发 animation_finished 信号，用于 EATING/FEEDING 等一次性动作）"""
+        self._play(state, one_shot=True)
+
+    def _play(self, state: PetState, one_shot: bool):
         if state not in ASSET_MAP:
             return
-
         filename, file_type, fps = ASSET_MAP[state]
         asset_path = get_asset_path(filename)
         self._current_state = state
         pet_h, _ = _runtime_sizes()
 
         if file_type == "gif":
-            self._play_gif(asset_path, fps, pet_h)
+            self._play_gif(asset_path, fps, pet_h, one_shot=one_shot)
         elif file_type == "png":
             self._play_png(asset_path, pet_h)
 
-    def _play_gif(self, path: str, fps: int, pet_height: int):
-        """播放 GIF 动画（自动缩放到 pet_height）"""
+    def _play_gif(self, path: str, fps: int, pet_height: int, one_shot: bool = False):
+        """播放 GIF 动画（自动缩放到 pet_height）
+
+        Args:
+            path: GIF 文件路径
+            fps: 期望播放帧率（tuple 里写的那个）
+            pet_height: 宠物目标高度
+            one_shot: True = 只播一轮后发 animation_finished 信号
+                      False = 循环播放（IDLE/WALKING 等挂机状态）
+        """
         # 停止上一个动画
         if self._movie is not None:
             self._movie.stop()
+            try:
+                self._movie.frameChanged.disconnect()
+            except Exception:
+                pass
 
         self._movie = QMovie(path)
+        if one_shot:
+            # PySide6 QMovie 没有 setLoopCount，用 frameChanged 监听最后一帧
+            total_frames = self._movie.frameCount()
+            if total_frames > 0:
+                self._movie.frameChanged.connect(
+                    lambda frame_num: self._on_one_shot_frame(frame_num, total_frames)
+                )
+            else:
+                # frameCount() 返回 0（某些 GIF），兜底用 QTimer 按 fps 估算时长
+                original_fps = _get_gif_original_fps(path)
+                # 用 PIL 拿真实帧数
+                try:
+                    from PIL import Image as _PILImage
+                    _img = _PILImage.open(path)
+                    total_frames = getattr(_img, "n_frames", 1)
+                except Exception:
+                    total_frames = 1
+                duration_ms = int(total_frames / max(fps, 1) * 1000)
+                QTimer.singleShot(duration_ms, lambda: self.animation_finished.emit(self._current_state))
+
         if fps > 0:
-            self._movie.setSpeed(fps * 10)  # QMovie 速度是百分比
+            # 读取 GIF 原始帧率，按 tuple 里指定的 fps 精确调速
+            # setSpeed(百分比)：100 = 原始速度
+            # 百分比 = (期望fps / 原始fps) * 100
+            original_fps = _get_gif_original_fps(path)
+            speed_percent = int((fps / original_fps) * 100)
+            self._movie.setSpeed(speed_percent)
 
         # 获取原始尺寸并缩放
         original = _get_image_size(path)
@@ -246,6 +325,12 @@ class PetAnimator(QObject):
 
         # 保存引用避免 GC
         self._pixmap = None
+
+    def _on_one_shot_frame(self, frame_num: int, total_frames: int):
+        """一次性动画：播到最后一帧时停掉并发信号"""
+        if frame_num >= total_frames - 1:
+            self._movie.stop()
+            self.animation_finished.emit(self._current_state)
 
     def _play_png(self, path: str, pet_height: int):
         """显示静态图片（自动缩放到 pet_height）"""
@@ -269,9 +354,11 @@ class PetAnimator(QObject):
 
         self._label.setPixmap(self._pixmap)
 
-    def play_sound(self, filename: str = None):
-        """播放音效"""
-        sound_path = get_asset_path(filename or SOUND_FILE)
+    def play_sound(self, state=None):
+        """播放音效。传 state 查 SOUND_MAP，在表里就播，不在表里就不播"""
+        if state is None or state not in SOUND_MAP:
+            return
+        sound_path = get_asset_path(SOUND_MAP[state])
         if self._player is None:
             self._player = QMediaPlayer()
             self._audio_output = QAudioOutput()
@@ -280,10 +367,17 @@ class PetAnimator(QObject):
         self._player.setSource(QUrl.fromLocalFile(sound_path))
         self._player.play()
 
-    def get_item_pixmap(self) -> QPixmap:
-        """获取缩放后的物品图片（高度 = 当前配置的 ITEM_HEIGHT）"""
+    def stop_sound(self):
+        """立即停止当前音效（拖拽松手时调，音效讲究及时性）"""
+        if self._player is not None:
+            self._player.stop()
+
+    def get_item_pixmap(self, state=None):
+        """获取缩放后的物品图片。传 state 查 ITEM_MAP，在表里就取对应图，不在表里返回 None"""
+        if state is None or state not in ITEM_MAP:
+            return None
         _, item_h = _runtime_sizes()
-        path = get_asset_path(ITEM_IMAGE)
+        path = get_asset_path(ITEM_MAP[state])
         pixmap = QPixmap(path)
         original = pixmap.size()
         if original.height() > 0:

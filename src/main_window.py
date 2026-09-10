@@ -972,7 +972,9 @@ class ClearPrivacyDialog(QDialog):
         self.setWindowTitle("清除本地隐私数据")
         self.resize(560, 460)
 
-        # 先把 5 项路径准备好
+        # 先把路径准备好
+        import os
+        from .resource_manager import get_data_path
         dc = DouyinCrawler()
         locs = dc.login_data_locations()
         from .config import SETTINGS_JSON
@@ -1006,6 +1008,12 @@ class ClearPrivacyDialog(QDialog):
                 "抖音 Chrome 独立用户资料目录",
                 DouyinCrawler.LOGIN_LOCATIONS_DESC["chrome_profile_dir"],
                 locs["chrome_profile_dir"],
+            ),
+            ClearPrivacyDialog.Item(
+                "crawler_tmp",
+                "爬虫临时文件 data/tmp/",
+                "下载中断/失败留下的半成品（.part / .ytdl / 未合并的音视频分片）。\n勾选后会递归删除 data/tmp/ 下所有子目录。",
+                os.path.join(get_data_path("tmp")),
             ),
         ]
         root = QVBoxLayout(self)
@@ -1112,6 +1120,29 @@ class ClearPrivacyDialog(QDialog):
                             failed.append(f"[{attr}] {f} —— {type(e).__name__}: {e}")
                     else:
                         skipped.append(f"[{attr}] {f} —— 本来就不存在")
+
+        # 爬虫临时文件
+        if "crawler_tmp" in picked_keys:
+            tmp_base = get_data_path("tmp")
+            if os.path.isdir(tmp_base):
+                import shutil
+                cleared = 0
+                for sub in os.listdir(tmp_base):
+                    sub_path = os.path.join(tmp_base, sub)
+                    try:
+                        if os.path.isdir(sub_path):
+                            shutil.rmtree(sub_path)
+                        else:
+                            os.remove(sub_path)
+                        cleared += 1
+                    except OSError:
+                        failed.append(f"[tmp] {sub_path} —— 删除失败（文件被占用？）")
+                if cleared:
+                    ok.append(f"[临时文件] data/tmp/ 下清除了 {cleared} 个子目录/文件")
+                else:
+                    skipped.append("[临时文件] data/tmp/ —— 没有可清除的内容")
+            else:
+                skipped.append("[临时文件] data/tmp/ —— 本来就不存在")
 
         # 让 PetWindow 立刻同步 CRAWLER_PROXY（避免还挂着老的手动代理）
         global CRAWLER_PROXY
@@ -1557,6 +1588,7 @@ class PetWindow(QWidget):
                 # 开始拖拽
                 self._dragging = True
                 self._state_machine.force_transition(PetState.DRAGGING)
+                self._animator.play_sound(PetState.DRAGGING)
 
             if self._dragging:
                 self.move(event.globalPosition().toPoint() - self._drag_offset)
@@ -1564,7 +1596,8 @@ class PetWindow(QWidget):
     def mouseReleaseEvent(self, event):
         if event.button() == Qt.LeftButton:
             if self._dragging:
-                # 拖拽结束 → 松开动画 → 待机
+                # 拖拽结束 → 停音效 → 松开动画 → 待机
+                self._animator.stop_sound()
                 # 用 force_transition 因为 DRAGGING 不可打断
                 self._state_machine.force_transition(PetState.RELEASED)
                 # 800ms 后回到待机（RELEASED 可正常转换）
@@ -1572,8 +1605,9 @@ class PetWindow(QWidget):
                     self._state_machine.transition_to(PetState.IDLE)
                 ))
             else:
-                # 点击 → 播放音效作为反馈
-                self._animator.play_sound()
+                # 点击反馈（当前 SOUND_MAP 没有 IDLE 的音效，不播）
+                # 后续可加 PATTED 状态音效：self._animator.play_sound(PetState.PATTED)
+                pass
             self._dragging = False
 
     # ======================== 右键菜单 ========================
@@ -1813,7 +1847,7 @@ class PetWindow(QWidget):
         action_github.triggered.connect(self._open_github)
         action_gitee.triggered.connect(self._open_gitee)
         action_ihan.triggered.connect(self._open_ihan)
-        action_quit.triggered.connect(self.close)
+        action_quit.triggered.connect(self._quit_app)
 
         menu.exec(pos)
 
@@ -2250,6 +2284,8 @@ class PetWindow(QWidget):
 
     def _on_crawler_failed(self, err_msg: str):
         """失败弹窗；如果是抖音未登录需要扫码，额外提供一个"现在去登录"按钮。"""
+        # 写错误日志到文件（单文件，超过 200KB 自动截断保留最后 100KB）
+        self._write_error_log(err_msg)
         need_login = "登录" in err_msg or ("Cookie" in err_msg and "抖音" in err_msg) or "douyin_cookies" in err_msg
         if need_login:
             box = QMessageBox(self)
@@ -2257,6 +2293,7 @@ class PetWindow(QWidget):
             box.setText(err_msg + "\n\n现在要不要立刻去做一次扫码登录？")
             box.setIcon(QMessageBox.Warning)
             btn_now = box.addButton("现在去登录", QMessageBox.AcceptRole)
+            btn_log = box.addButton("查看错误日志", QMessageBox.ActionRole)
             btn_later = box.addButton("稍后再说", QMessageBox.RejectRole)
             box.exec()
             if box.clickedButton() is btn_now:
@@ -2265,10 +2302,63 @@ class PetWindow(QWidget):
                     self._crawler_worker.quit()
                     self._crawler_worker.wait(2000)
                 self._douyin_login()
+            elif box.clickedButton() is btn_log:
+                from .resource_manager import get_data_path, open_in_explorer
+                log_path = get_data_path("crawler_error.log")
+                open_in_explorer(log_path, select_file=True)
             return
-        QMessageBox.warning(self, "爬虫失败", err_msg)
+        # 普通失败弹窗，附带「查看日志」按钮
+        box = QMessageBox(self)
+        box.setWindowTitle("爬虫失败")
+        box.setIcon(QMessageBox.Warning)
+        box.setText(err_msg)
+        btn_view_log = box.addButton("查看错误日志", QMessageBox.AcceptRole)
+        box.addButton("关闭", QMessageBox.RejectRole)
+        box.exec()
+        if box.clickedButton() is btn_view_log:
+            from .resource_manager import get_data_path, open_in_explorer
+            log_path = get_data_path("crawler_error.log")
+            open_in_explorer(log_path, select_file=True)
 
     # ======================== 清理 ========================
+
+    def _write_error_log(self, err_msg: str):
+        """把爬虫错误追加写入 data/crawler_error.log，超过 200KB 自动截断保留最后 100KB"""
+        import datetime
+        from .resource_manager import get_data_path
+        log_path = get_data_path("crawler_error.log")
+        try:
+            entry = f"\n{'='*60}\n[{datetime.datetime.now():%Y-%m-%d %H:%M:%S}]\n{err_msg}\n"
+            # 检查文件大小，超过 200KB 就先截断
+            if os.path.isfile(log_path) and os.path.getsize(log_path) > 200_000:
+                with open(log_path, "r", encoding="utf-8", errors="replace") as f:
+                    content = f.read()
+                # 只保留最后 100KB
+                content = content[-100_000:] if len(content) > 100_000 else content
+                with open(log_path, "w", encoding="utf-8") as f:
+                    f.write(content)
+            # 追加新条目
+            with open(log_path, "a", encoding="utf-8") as f:
+                f.write(entry)
+        except Exception:
+            pass  # 写日志失败不能影响主流程
+
+    def _quit_app(self):
+        """右键「退出」：关掉所有窗口 + 停线程 + 彻底退出进程"""
+        # 先清理物品窗口、动画、爬虫线程（跟 closeEvent 一样）
+        self._interaction.cleanup()
+        self._animator.stop()
+        if self._crawler_worker is not None and self._crawler_worker.isRunning():
+            self._crawler_worker.quit()
+            self._crawler_worker.wait(2000)
+        # 关掉所有顶层窗口（物品窗口、浮层等 Tool 窗口）
+        app = QApplication.instance()
+        if app is not None:
+            for w in app.topLevelWidgets():
+                if w is not self:
+                    w.close()
+        # 最后退出 app（不等窗口事件循环）
+        QApplication.quit()
 
     def closeEvent(self, event):
         """窗口关闭时清理资源"""
