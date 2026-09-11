@@ -36,7 +36,10 @@ ISS_FILE = SCRIPTS_DIR / 'build_installer.iss'
 DIST_PET_DIR = PROJECT_ROOT / 'dist' / 'pet'
 RELEASE_DIR = PROJECT_ROOT / 'release'
 
-DEFAULT_VERSION = datetime.now().strftime('%Y%m%d')
+# 让脚本能 import 同目录下的 app_meta.py
+sys.path.insert(0, str(SCRIPTS_DIR))
+
+DEFAULT_VERSION = '1.0.0'
 
 
 # ============================== 工具函数 ==============================
@@ -69,7 +72,7 @@ def get_version_from_git() -> str:
 
 
 def find_iscc() -> Optional[str]:
-    """探测 Inno Setup 编译器 ISCC.exe 路径
+    r"""探测 Inno Setup 编译器 ISCC.exe 路径
 
     探测顺序：
       1. PATH 环境变量（shutil.which）
@@ -167,15 +170,27 @@ def verify_pet_dist() -> None:
 def run_iscc(iscc_path: str, version: str) -> Path:
     """调用 ISCC.exe 编译 iss 文件
 
-    通过 /D 命令行参数覆盖 iss 中的 #define MyAppVersion
+    通过 /D 命令行参数覆盖 iss 中的 #define 变量，
+    让安装包的产品名、版本号、公司名等与 app_meta.py 一致。
     """
+    from app_meta import (
+        PRODUCT_NAME, COMPANY_NAME, LEGAL_COPYRIGHT, ORIGINAL_FILENAME,
+        INSTALLER_DESCRIPTION, APP_URL,
+    )
+
     _print_step(f"调用 ISCC 编译安装包（版本：{version}）")
 
     RELEASE_DIR.mkdir(parents=True, exist_ok=True)
 
     cmd = [
         iscc_path,
+        f"/DMyAppName={PRODUCT_NAME}",
         f"/DMyAppVersion={version}",
+        f"/DMyAppPublisher={COMPANY_NAME}",
+        f"/DMyAppCopyright={LEGAL_COPYRIGHT}",
+        f"/DMyAppExeName={ORIGINAL_FILENAME}",
+        f"/DMyAppDescription={INSTALLER_DESCRIPTION}",
+        f"/DMyAppURL={APP_URL}",
         f"/Q",                          # 安静模式，仅输出错误
         str(ISS_FILE),
     ]
@@ -231,6 +246,9 @@ def main() -> int:
 
     version = args.version or get_version_from_git()
     print(f"  版本号：{version}")
+
+    # 提前创建 release 目录，即使后续失败也存在
+    RELEASE_DIR.mkdir(parents=True, exist_ok=True)
 
     try:
         if not args.skip_build:

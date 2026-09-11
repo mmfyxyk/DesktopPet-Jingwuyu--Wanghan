@@ -17,9 +17,9 @@ from PySide6.QtWidgets import (
     QWidget, QLabel, QMenu, QApplication, QMessageBox, QDialog, QFormLayout,
     QVBoxLayout, QHBoxLayout, QRadioButton, QLineEdit, QSpinBox, QComboBox,
     QDialogButtonBox, QPushButton, QPlainTextEdit, QButtonGroup, QCheckBox,
-    QGraphicsDropShadowEffect,
+    QGraphicsDropShadowEffect, QSystemTrayIcon, QStyle,
 )
-from PySide6.QtGui import QDesktopServices
+from PySide6.QtGui import QDesktopServices, QIcon
 
 from .pet_state_machine import PetState, StateMachine
 from .pet_animator import PetAnimator
@@ -1312,6 +1312,10 @@ class PetWindow(QWidget):
         # 记录窗口置顶的 QAction（勾选状态与当前设置联动）
         self._action_always_on_top: Optional[QAction] = None
 
+        # —— 系统托盘（桌宠不在任务栏显示，用托盘图标给用户一个"程序在运行"的标识 + 快捷退出）——
+        self._tray: Optional[QSystemTrayIcon] = None
+        self._init_tray()
+
         # 初始化
         self._init_ui()
         self._start_idle()
@@ -1382,6 +1386,52 @@ class PetWindow(QWidget):
         self._save_app_cfg_and_notice(
             f"宠物显示高度 = {self._app_cfg.pet_height} px"
         )
+
+    # ======================================================================
+    # 系统托盘：桌宠不在任务栏显示，用托盘图标标识程序运行状态
+    # ======================================================================
+
+    def _init_tray(self):
+        """创建系统托盘图标 + 右键菜单（显示/隐藏宠物、退出）"""
+        if not QSystemTrayIcon.isSystemTrayAvailable():
+            return
+
+        from .resource_manager import get_asset_path
+        icon_path = get_asset_path("icons/app.ico")
+        tray_icon = QIcon(icon_path) if icon_path else self.style().standardIcon(
+            QStyle.SP_ComputerIcon
+        )
+
+        self._tray = QSystemTrayIcon(tray_icon, self)
+        self._tray.setToolTip("桌面电子宠物")
+
+        # 托盘右键菜单
+        tray_menu = QMenu()
+        act_show = tray_menu.addAction("显示/隐藏宠物")
+        act_show.triggered.connect(self._toggle_visibility)
+        tray_menu.addSeparator()
+        act_quit = tray_menu.addAction("退出")
+        act_quit.triggered.connect(self._quit_app)
+
+        self._tray.setContextMenu(tray_menu)
+        # 双击托盘 = 显示宠物
+        self._tray.activated.connect(self._on_tray_activated)
+        self._tray.show()
+
+    def _on_tray_activated(self, reason):
+        """托盘图标被激活时的响应"""
+        if reason == QSystemTrayIcon.DoubleClick:
+            self._toggle_visibility()
+
+    def _toggle_visibility(self):
+        """托盘菜单「显示/隐藏宠物」"""
+        if self.isVisible():
+            self.hide()
+        else:
+            self.showNormal()       # 清除可能的最小化状态
+            self.show()
+            self.raise_()           # 提到最前
+            self.activateWindow()   # 激活窗口（获取焦点）
 
     def _init_ui(self):
         """初始化 UI"""

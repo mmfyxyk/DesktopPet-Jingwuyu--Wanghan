@@ -29,32 +29,54 @@ icon_arg = APP_ICON if os.path.exists(APP_ICON) else None
 
 block_cipher = None
 
+# PyInstaller 6.x+ 不再自动注入版本信息相关类，需显式导入
+from PyInstaller.utils.win32.versioninfo import (
+    VSVersionInfo,
+    FixedFileInfo,
+    StringFileInfo,
+    StringTable,
+    StringStruct,
+    VarFileInfo,
+    VarStruct,
+)
+
 
 # ============================== 版本信息资源 ==============================
 # 嵌入 pet.exe 的 VS_VERSIONINFO 资源块。
 # 右键 pet.exe → 属性 → 详细信息 里看到的字段就来自这里。
 # 注意：这【不是】代码签名，只是版本信息资源。SmartScreen 看的是数字签名，
 # 不看这里的 CompanyName。但属性页能显示正规的发布者/产品名/版本号。
+#
+# 所有元数据由 build_exe.py 通过环境变量传入（来源 scripts/app_meta.py）。
+# 改产品名/公司名/版本号 → 编辑 scripts/app_meta.py，不要改这里。
 
-# 版本号约定：构建脚本可通过环境变量 PET_VERSION 覆盖（默认 1.0.0.0）
 import os as _os
 _pet_version_str = _os.environ.get('PET_VERSION', '1.0.0')
+_pet_product_version_str = _os.environ.get('PET_PRODUCT_VERSION', _pet_version_str)
+_pet_product_name = _os.environ.get('PET_PRODUCT_NAME', '桌面电子宠物')
+_pet_company_name = _os.environ.get('PET_COMPANY_NAME', '')
+_pet_file_desc = _os.environ.get('PET_FILE_DESCRIPTION', _pet_product_name)
+_pet_internal_name = _os.environ.get('PET_INTERNAL_NAME', 'pet')
+_pet_original_filename = _os.environ.get('PET_ORIGINAL_FILENAME', 'pet.exe')
+_pet_legal_copyright = _os.environ.get('PET_LEGAL_COPYRIGHT', '')
+
 # VS_VERSIONINFO 要求 4 段数字（dword），缺位补 0
-def _to_quad(v: str) -> tuple[int, int, int, int]:
+def _to_quad(v: str) -> tuple:
     parts = (v + '.0.0.0').split('.')[:4]
     try:
-        return tuple(int(p) for p in parts)  # type: ignore[return-value]
+        return tuple(int(p) for p in parts)
     except ValueError:
         return (1, 0, 0, 0)
-_pet_version_quad = _to_quad(_pet_version_str)
+_pet_file_quad = _to_quad(_pet_version_str)
+_pet_product_quad = _to_quad(_pet_product_version_str)
 
 
 version_info = VSVersionInfo(
     ffi=FixedFileInfo(
-        filevers=_pet_version_quad,           # 文件版本（4 段数字）
-        prodvers=_pet_version_quad,           # 产品版本（4 段数字）
-        mask32=0x3F,                          # 类型掩码
-        flag32=0x0,                           # 标志位
+        filevers=_pet_file_quad,             # 文件版本（4 段数字）
+        prodvers=_pet_product_quad,           # 产品版本（4 段数字）
+        mask=0x3F,                            # 类型掩码
+        flags=0x0,                            # 标志位
         OS=0x40004,                           # VOS_NT_WINDOWS32
         fileType=0x1,                        # VFT_APP（普通应用程序）
         subtype=0x0,
@@ -62,15 +84,15 @@ version_info = VSVersionInfo(
     ),
     kids=[
         StringFileInfo([
-            StringTable('080403B0', [         # 0804=简体中文, 03B0=Unicode
-                StringStruct('CompanyName', '锐尘ruichen'),
-                StringStruct('FileDescription', '净无欲-王涵桌面电子宠物'),
+            StringTable('080404B0', [         # 0804=简体中文, 04B0=Unicode(1200)
+                StringStruct('CompanyName', _pet_company_name),
+                StringStruct('FileDescription', _pet_file_desc),
                 StringStruct('FileVersion', _pet_version_str),
-                StringStruct('InternalName', 'pet'),
-                StringStruct('LegalCopyright', '© 2024-2026 mmfyxyk. 基于 MIT License 开源。'),
-                StringStruct('OriginalFilename', 'pet.exe'),
-                StringStruct('ProductName', '净无欲-王涵桌面桌面电子宠物'),
-                StringStruct('ProductVersion', _pet_version_str),
+                StringStruct('InternalName', _pet_internal_name),
+                StringStruct('LegalCopyright', _pet_legal_copyright),
+                StringStruct('OriginalFilename', _pet_original_filename),
+                StringStruct('ProductName', _pet_product_name),
+                StringStruct('ProductVersion', _pet_product_version_str),
             ]),
         ]),
         VarFileInfo([VarStruct('Translation', [0x0804, 1200])]),
@@ -102,7 +124,24 @@ a = Analysis(
 
         # —— 爬虫相关 ——
         'selenium',                # B 站 / 抖音 Selenium 驱动
+        'selenium.webdriver',
+        'selenium.webdriver.chrome',
+        'selenium.webdriver.chrome.webdriver',
+        'selenium.webdriver.chrome.service',
+        'selenium.webdriver.chrome.options',
+        'selenium.webdriver.remote',
+        'selenium.webdriver.remote.webdriver',
+        'selenium.webdriver.remote.command',
+        'selenium.webdriver.common',
+        'selenium.webdriver.common.by',
+        'selenium.webdriver.common.keys',
+        'selenium.webdriver.common.service',
+        'selenium.webdriver.support',
+        'selenium.webdriver.support.ui',
+        'selenium.webdriver.support.wait',
+        'selenium.webdriver.support.expected_conditions',
         'requests',                # HTTP 请求
+        'requests.exceptions',
         # yt-dlp 仅作子进程调用，不需要作为 hidden import，但若以后改成 import yt_dlp 需要补上
 
         # —— 后续扩展预留 ——
@@ -119,8 +158,8 @@ a = Analysis(
         'unittest',
         'pydoc',
         'test',
-        'distutils',
         'lib2to3',
+        # 注意：不要排除 distutils，Python 3.12+ 已移除，PyInstaller 会用 setuptools._distutils 别名兼容
     ],
     win_no_prefer_redirects=False,
     win_private_assemblies=False,
@@ -156,7 +195,7 @@ exe = EXE(
     codesign_identity=None,
     entitlements_file=None,
     icon=icon_arg,
-    version=version_info,            # 嵌入 VS_VERSIONINFO 资源
+    version=version_info,            # 嵌入 VS_VERSIONINFO 资源（元数据来自环境变量）
 )
 
 

@@ -1,9 +1,10 @@
 """一键打包三个产物（主入口）
 
 依次执行：
-    1. build_exe.py       → dist/pet/pet.exe         （代码打包）
-    2. build_portable.py  → release/DesktopPet-Portable-{version}.zip  （绿色版）
-    3. build_installer.py → release/DesktopPet-Setup-{version}.exe    （安装包）
+    1. build_exe.py       → dist/pet/pet.exe                                 （代码打包）
+    2. build_portable.py  → release/DesktopPet-Portable-{version}.zip        （绿色版）
+    3. build_installer.py → release/DesktopPet-Setup-{version}.exe           （安装包）
+    4. build_source.py    → release/DesktopPet-Source-{version}.zip          （源代码压缩包）
 
 用法：
     python scripts/build_all.py
@@ -11,6 +12,7 @@
     python scripts/build_all.py --skip exe         # 跳过代码打包，复用已有 dist/pet/
     python scripts/build_all.py --only portable    # 只生成绿色版
     python scripts/build_all.py --only installer   # 只生成安装包
+    python scripts/build_all.py --only source      # 只生成源代码压缩包
 
 前置条件：
     pip install pyinstaller
@@ -19,7 +21,8 @@
 产物汇总：
     release/
     ├── DesktopPet-Portable-{version}.zip   （绿色版，解压即用）
-    └── DesktopPet-Setup-{version}.exe     （安装包，向导式安装）
+    ├── DesktopPet-Setup-{version}.exe      （安装包，向导式安装）
+    └── DesktopPet-Source-{version}.zip     （源代码压缩包，含全部源码）
 """
 
 from __future__ import annotations
@@ -34,7 +37,7 @@ SCRIPTS_DIR = Path(__file__).resolve().parent
 PROJECT_ROOT = SCRIPTS_DIR.parent
 RELEASE_DIR = PROJECT_ROOT / 'release'
 
-DEFAULT_VERSION = datetime.now().strftime('%Y%m%d')
+DEFAULT_VERSION = '1.0.0'
 
 
 # ============================== 工具函数 ==============================
@@ -110,9 +113,9 @@ def main() -> int:
     parser = argparse.ArgumentParser(description='桌面电子宠物 - 一键打包三个产物')
     parser.add_argument('--version', default=None,
                         help='版本号（默认：git tag 或日期 YYYYMMDD）')
-    parser.add_argument('--skip', choices=['exe', 'portable', 'installer'],
-                        help='跳过指定阶段（exe=代码打包, portable=绿色版, installer=安装包）')
-    parser.add_argument('--only', choices=['exe', 'portable', 'installer'],
+    parser.add_argument('--skip', choices=['exe', 'portable', 'installer', 'source'],
+                        help='跳过指定阶段（exe=代码打包, portable=绿色版, installer=安装包, source=源码包）')
+    parser.add_argument('--only', choices=['exe', 'portable', 'installer', 'source'],
                         help='只执行指定阶段')
     args = parser.parse_args()
 
@@ -124,7 +127,7 @@ def main() -> int:
     print(f"  版本号：{version}\n")
 
     # —— 决定执行哪些阶段 ——
-    stages = ['exe', 'portable', 'installer']
+    stages = ['exe', 'portable', 'installer', 'source']
     if args.only:
         stages = [args.only]
     elif args.skip:
@@ -153,6 +156,11 @@ def main() -> int:
             ret = run_script('build_installer.py', version, skip_build=skip_build)
             if ret != 0:
                 failures.append('installer')
+
+        elif stage == 'source':
+            ret = run_script('build_source.py', version)
+            if ret != 0:
+                failures.append('source')
 
     print_summary(version)
 

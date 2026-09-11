@@ -204,8 +204,13 @@ class PetAnimator(QObject):
         self._movie = None          # QMovie 引用（避免被 GC 回收）
         self._pixmap = None         # QPixmap 引用（避免被 GC 回收）
         self._current_state: Optional[PetState] = None
-        self._player = None         # 音频播放器
-        self._audio_output = None
+
+        # 音频播放器：在 __init__ 里就创建并预热，避免第一次 play() 时
+        # 音频设备还没初始化导致没声音（打包后首次运行尤其明显）
+        self._player = QMediaPlayer()
+        self._audio_output = QAudioOutput()
+        self._player.setAudioOutput(self._audio_output)
+        self._audio_output.setVolume(0.8)
 
     # ------------------------------------------------------------------ 尺寸联动
 
@@ -359,11 +364,7 @@ class PetAnimator(QObject):
         if state is None or state not in SOUND_MAP:
             return
         sound_path = get_asset_path(SOUND_MAP[state])
-        if self._player is None:
-            self._player = QMediaPlayer()
-            self._audio_output = QAudioOutput()
-            self._player.setAudioOutput(self._audio_output)
-
+        # _player 在 __init__ 里就创建好了，这里直接 setSource + play
         self._player.setSource(QUrl.fromLocalFile(sound_path))
         self._player.play()
 

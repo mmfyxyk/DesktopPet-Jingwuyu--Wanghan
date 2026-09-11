@@ -35,13 +35,15 @@ from pathlib import Path
 
 SCRIPTS_DIR = Path(__file__).resolve().parent
 PROJECT_ROOT = SCRIPTS_DIR.parent
+# 让脚本能 import 同目录下的 app_meta.py
+sys.path.insert(0, str(SCRIPTS_DIR))
 DIST_DIR = PROJECT_ROOT / 'dist'
 PET_DIST_DIR = DIST_DIR / 'pet'
 RELEASE_DIR = PROJECT_ROOT / 'release'
 SUPPORT_DIR_SRC = PROJECT_ROOT / 'support'        # 项目里的 support/（含 ffmpeg/Chrome 等外部工具）
 
 # 默认版本号：若 git 有 tag 用 tag，否则用日期
-DEFAULT_VERSION = datetime.now().strftime('%Y%m%d')
+DEFAULT_VERSION = '1.0.0'
 
 
 # ============================== 工具函数 ==============================
@@ -94,18 +96,25 @@ def _support_ignore(directory: str, names: list[str]) -> set[str]:
 
 
 def get_version_from_git() -> str:
-    """优先使用 git tag 作为版本号，否则用日期"""
+    """优先使用 git tag 作为版本号；没有 tag 时用 app_meta.py 里的 VERSION
+    （不用 commit hash，因为 zip 文件名里带 hash 不友好）"""
     try:
         proc = subprocess.run(
-            ['git', 'describe', '--tags', '--always'],
+            ['git', 'describe', '--tags', '--exact-match'],
             cwd=str(PROJECT_ROOT),
             capture_output=True, text=True, timeout=5,
         )
         if proc.returncode == 0 and proc.stdout.strip():
-            return proc.stdout.strip()
+            tag = proc.stdout.strip().lstrip('v')
+            return tag
     except (FileNotFoundError, subprocess.TimeoutExpired):
         pass
-    return DEFAULT_VERSION
+    # 没有 tag 时从 app_meta.py 读默认版本号
+    try:
+        from app_meta import VERSION
+        return VERSION
+    except ImportError:
+        return DEFAULT_VERSION
 
 
 def run_build_exe() -> None:
@@ -161,6 +170,9 @@ def prepare_staging(version: str) -> Path:
     _print_step("拷贝 support/ 外部工具目录（排除 Chrome 用户数据）")
     support_dst = app_root / 'support'
     if SUPPORT_DIR_SRC.is_dir():
+        # PyInstaller 产物里可能有个空的 support 占位目录，先删掉再拷
+        if support_dst.exists():
+            shutil.rmtree(support_dst, ignore_errors=True)
         shutil.copytree(SUPPORT_DIR_SRC, support_dst, ignore=_support_ignore)
         # 统计拷贝了哪些内容
         for item in sorted(support_dst.iterdir()):
@@ -285,6 +297,9 @@ def main() -> int:
 
     version = args.version or get_version_from_git()
     print(f"  版本号：{version}")
+
+    # 提前创建 release 目录，即使后续失败也存在
+    RELEASE_DIR.mkdir(parents=True, exist_ok=True)
 
     try:
         if not args.skip_build:

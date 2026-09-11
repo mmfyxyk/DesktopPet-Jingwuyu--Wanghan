@@ -18,11 +18,15 @@
 ;       表示 iss 文件所在目录，等价于 scripts/ 目录。
 ; ==========================================================================
 
-#define MyAppName          "桌面电子宠物"
+; 注意：产品名/版本号/公司名/版权等元数据优先由 build_installer.py 通过 /D 传入，
+; 与 scripts/app_meta.py 保持一致。下面的值是直接用 ISCC 编译时的兜底默认值。
+#define MyAppName          "净无欲-王涵桌面电子宠物"
 #define MyAppNameEn        "DesktopPet"
 #define MyAppExeName       "pet.exe"
 #define MyAppVersion       "1.0.0"
-#define MyAppPublisher     "mmfyxyk"
+#define MyAppPublisher     "锐尘ruichen"
+#define MyAppCopyright     "© 2025-2026 mmfyxyk. 基于 MIT License 开源。"
+#define MyAppDescription   "净无欲-王涵桌面电子宠物安装程序"
 #define MyAppURL          "https://github.com/mmfyxyk/DesktopPet-Jingwuyu--Wanghan"
 
 ; 这些路径以 iss 文件所在 scripts/ 为基准
@@ -35,6 +39,8 @@ AppName={#MyAppName}
 AppVersion={#MyAppVersion}
 AppVerName={#MyAppName} {#MyAppVersion}
 AppPublisher={#MyAppPublisher}
+AppCopyright={#MyAppCopyright}
+AppComments={#MyAppDescription}
 AppPublisherURL={#MyAppURL}
 AppSupportURL={#MyAppURL}
 AppUpdatesURL={#MyAppURL}
