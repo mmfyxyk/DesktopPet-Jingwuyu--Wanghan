@@ -91,19 +91,17 @@ ASSET_MAP = {
     PetState.EATING:     ("试.gif", "gif", 20),
     PetState.ASKING_FOOD: ("试.gif", "gif", 12),
     PetState.FEEDING:     ("feeding/feeding.gif", "gif", 20),
-    PetState.SLEEPING:    ("试.gif", "gif", 5),
     PetState.PLAYING:     ("试.gif", "gif", 15),
-    PetState.ANGRY:       ("试.gif", "gif", 12),
 }
 
 # 音效映射：按状态取对应音效（没列的状态不播音效）
 SOUND_MAP = {
     PetState.EATING:      "试.mp3",               # 吃东西 → 咀嚼声
-    PetState.SLEEPING:    "试.mp3",               # 睡觉 → 呼噜
-    PetState.ANGRY:       "试.mp3",               # 生气 → 哼
     PetState.ASKING_FOOD: "试.mp3",               # 求投喂 → 肚子咕咕
     PetState.FEEDING:     "试.mp3",               # 喂食 → 开心吃
     PetState.DRAGGING:    "dragging/dragging1.mp3",  # 拖拽 → 被抓起的音效
+    #PetState.SLEEPING:    "试.mp3",               # 睡觉 → 呼噜
+    #PetState.ANGRY:       "试.mp3",               # 生气 → 哼
     # IDLE / WALKING / RELEASED / PLAYING → 不需要音效
 }
 
@@ -130,6 +128,8 @@ ITEM_MAP = {
 # ---------------------------------------------------------------------------
 # _EXT_ASSET_MAP = {
 #     # —— 动画类：全部先用 试.gif 暂代 ——
+#     #PetState.SLEEPING:    ("试.gif", "gif", 5),     # 睡觉
+      #PetState.ANGRY:       ("试.gif", "gif", 12),    # 生气
 #     # PetState.HAPPY:        ("试.gif", "gif", 14),  # 开心（情绪高）
 #     # PetState.SAD:          ("试.gif", "gif", 8),   # 委屈/难过
 #     # PetState.SICK:         ("试.gif", "gif", 6),   # 生病（慢）

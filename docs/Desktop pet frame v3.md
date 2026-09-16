@@ -10,14 +10,14 @@
 
 ### 2.1 基础模块
 
-| 功能名称  | 功能描述                                    | 实现状态 | 扩展预留              |
-| ----- | --------------------------------------- | ---- | ----------------- |
-| 透明窗口  | 无边框，背景全透明，宠物悬浮于桌面之上                     | 已实现  | 可扩展窗口置顶/置底、窗口大小调整 |
-| 多状态动画 | 包含待机、行走、睡觉、玩耍、生气等多种状态，随机触发             | 已实现  | 可扩展更多状态         |
-| 自由拖拽  | 支持鼠标左键拖拽宠物到桌面任意位置，拖动中进入被拖动状态，松开后有"松开"动画 | 已实现  | 可扩展拖拽时的视觉反馈、拖拽音效  |
-| 窗口置顶  | 宠物窗口始终显示在最上层                            | 已实现  | 可扩展窗口层级管理         |
-| 自动隐藏  | 宠物靠近屏幕边缘时自动隐藏                           | 待扩展  | 可扩展边缘吸附、自动弹出      |
-| 首次启动免责声明 | 滚动到底 + 倒计时后才能勾选继续，记录到 `data/consent.json`      | 已实现（v1.4） | 条款更新 bump `CONSENT_VERSION` 强制重新同意 |
+| 功能名称     | 功能描述                                      | 实现状态      | 扩展预留                               |
+| -------- | ----------------------------------------- | --------- | ---------------------------------- |
+| 透明窗口     | 无边框，背景全透明，宠物悬浮于桌面之上                       | 已实现       | 可扩展窗口置顶/置底、窗口大小调整                  |
+| 多状态动画    | 包含待机、行走、睡觉、玩耍、生气等多种状态，随机触发                | 已实现       | 可扩展更多状态                            |
+| 自由拖拽     | 支持鼠标左键拖拽宠物到桌面任意位置，拖动中进入被拖动状态，松开后有"松开"动画   | 已实现       | 可扩展拖拽时的视觉反馈、拖拽音效                   |
+| 窗口置顶     | 宠物窗口始终显示在最上层                              | 已实现       | 可扩展窗口层级管理                          |
+| 自动隐藏     | 宠物靠近屏幕边缘时自动隐藏                             | 待扩展       | 可扩展边缘吸附、自动弹出                       |
+| 首次启动免责声明 | 滚动到底 + 倒计时后才能勾选继续，记录到 `data/consent.json` | 已实现（v1.4） | 条款更新 bump `CONSENT_VERSION` 强制重新同意 |
 
 ### 2.2 高级模块（偏向交互互动）
 
@@ -32,15 +32,15 @@
 | 情绪系统 | 宠物拥有情绪值，影响行为表现         | 待扩展  | 可扩展情绪影响动画、情绪影响交互 |
 | 更多功能 | 待扩展                    | 未规划  | 可添加：摸头、对话、小游戏等   |
 
-### 2.3 拓展模块 *（算DLC？）*
+### 2.3 拓展模块 
 
-| 功能名称         | 功能描述                                                                    | 实现状态 | 扩展预留                                                                  |
-| ------------ | ----------------------------------------------------------------------- | ---- | --------------------------------------------------------------------- |
-| B站爬虫         | 爬取王涵最新视频（Selenium + WBI 签名接口兜底，支持多 XPATH 回退 + 便携 Chrome 复用 Cookie）                | 已集成  | 可扩展视频下载、自动播放、视频列表管理、推送通知                                           |
-| 抖音爬虫         | 爬取王涵抖音最新视频（**首次扫码登录 → Profile 目录持久化 + Cookie 双快照**；列表走 Selenium，下载交给 yt-dlp 带签名） | 已集成（含置顶/登录循环修复） | 可扩展定时爬取、直播提醒；需要用户在菜单里先做过一次「登录/重新登录（扫码）」                    |
-| ihan 粉丝站彩蛋    | 菜单「关于此项目 → ihan 粉丝站 ✨」一键跳转，默认系统浏览器打开粉丝站                                        | 已集成  | 可扩展定时访问、页面截图、内容监控、签到自动化（待实现）                                                  |
-| 浏览器自动访问      | 自动访问 ihan / 外链等（使用 support/ 下自带的便携版 Chrome + 独立用户资料目录，避免污染用户日常 Chrome 配置）       | 骨架已有 | 可扩展定时访问、页面截图、内容监控、定时签到                                                         |
-| 更多拓展         | 待扩展                                                                    | 未规划  | 可添加：微博动态、直播提醒、日程提醒、ihan 帖子互动、B站/抖音更新推送通知                                          |
+| 功能名称       | 功能描述                                                                             | 实现状态            | 扩展预留                                     |
+| ---------- | -------------------------------------------------------------------------------- | --------------- | ---------------------------------------- |
+| B站爬虫       | 爬取王涵最新视频（Selenium + WBI 签名接口兜底，支持多 XPATH 回退 + 便携 Chrome 复用 Cookie）               | 已集成             | 可扩展视频下载、自动播放、视频列表管理、推送通知                 |
+| 抖音爬虫       | 爬取王涵抖音最新视频（**首次扫码登录 → Profile 目录持久化 + Cookie 双快照**；列表走 Selenium，下载交给 yt-dlp 带签名） | 已集成（含置顶/登录循环修复） | 可扩展定时爬取、直播提醒；需要用户在菜单里先做过一次「登录/重新登录（扫码）」  |
+| ihan 粉丝站彩蛋 | 菜单「关于此项目 → ihan 粉丝站 ✨」一键跳转，默认系统浏览器打开粉丝站                                          | 已集成             | 可扩展定时访问、页面截图、内容监控、签到自动化（待实现）             |
+| 浏览器自动访问    | 自动访问 ihan / 外链等（使用 support/ 下自带的便携版 Chrome + 独立用户资料目录，避免污染用户日常 Chrome 配置）        | 骨架已有            | 可扩展定时访问、页面截图、内容监控、定时签到                   |
+| 更多拓展       | 待扩展                                                                              | 未规划             | 可添加：微博动态、直播提醒、日程提醒、ihan 帖子互动、B站/抖音更新推送通知 |
 
 ***
 
@@ -57,9 +57,9 @@
 | 求投喂  | `ASKING_FOOD` | 宠物做出期待的表情，刷出葡萄汁图片 | 是      | -             |
 | 喂食   | `FEEDING`     | 用户投喂后宠物吃东西，然后吐出豆腐 | 否      | -             |
 | 松开   | `RELEASED`    | 拖拽结束后播放的过渡动画      | 是      | -             |
-| 睡觉   | `SLEEPING`    | 宠物进入睡眠状态          | 是      | 已使用          |
-| 玩耍   | `PLAYING`     | 宠物玩耍状态            | 是      | 已使用          |
-| 生气   | `ANGRY`       | 宠物生气状态            | 是      | 已使用          |
+| 睡觉   | `SLEEPING`    | 宠物进入睡眠状态          | 是      | 已使用           |
+| 玩耍   | `PLAYING`     | 宠物玩耍状态            | 是      | 已使用           |
+| 生气   | `ANGRY`       | 宠物生气状态            | 是      | 已使用           |
 | 更多状态 | 待扩展           | -                 | -      | 可添加：洗澡、生病、开心等 |
 
 ### 3.2 状态转换条件表
@@ -88,25 +88,25 @@
 
 ### 3.3 动画帧映射表（素材目录+映射已实现为单文件映射）
 
-> **素材基准尺寸（以 `试.png 306×372 = 3:4 竖图` 为统一比例）**：
+> **素材基准尺寸（以** **`试.png 306×372 = 3:4 竖图`** **为统一比例）**：
 > 所有人物 GIF / PNG 原始制作按 **宽:高 = 3:4**（典型：360×480 或 480×640）。
 > 程序运行时 `PET_HEIGHT = 240`，**自动按高度等比缩放为 180×240**，保证所有动作切换时窗口不跳动。
 > 物品图统一按 `ITEM_HEIGHT = 80` 自动等比缩放。
 > 素材制作时达芬奇里只需**裁紧人物**，不用手调比例；`frames_to_gif.py --size 360x480` 会补齐到统一框。
 
-| 状态           | 素材文件（`ASSET_MAP` 键值）        | 类型 | 建议帧率 | 说明                  | 扩展预留   |
-| ------------ | -------------------------- | -- | ---- | ------------------- | ------ |
-| IDLE         | `试.gif` → 后续替换 `王涵_idle.gif`  | gif | 6-10 | 呼吸、眨眼等小动作           | -      |
-| WALKING      | `试.gif` → `王涵_walking.gif`      | gif | 12-15 | 左右腿交替行走             | -      |
-| DRAGGING     | `试.png` → `王涵_dragging.png`     | png | - | 静态图片，显示被抓住的样子       | -      |
-| RELEASED     | `试.gif` → `王涵_released.gif`     | gif | 15 | 落地缓冲动画              | -      |
-| EATING       | `试.gif` → `王涵_eating.gif`       | gif | 20 | 吃猪蹄的完整动作            | -      |
-| ASKING\_FOOD | `试.gif` → `王涵_asking_food.gif`  | gif | 12 | 期待、招手等动作            | -      |
-| FEEDING      | `试.gif` → `王涵_feeding.gif`      | gif | 20 | 吃东西然后吐出豆腐           | -      |
-| SLEEPING     | `试.gif` → `王涵_sleeping.gif`     | gif | 5 | 睡眠呼吸动画              | 已使用    |
-| PLAYING      | `试.gif` → `王涵_playing.gif`      | gif | 15 | 玩耍动作                | 已使用    |
-| ANGRY        | `试.gif` → `王涵_angry.gif`        | gif | 12 | 生气表情和动作             | 已使用    |
-| 物品（骨头/豆腐/葡萄汁） | `试_物品东西.png` → 各物品单独 PNG      | png | - | 葡萄汁横向约 160×120，缩到 **高 80px** | 已使用 |
+| 状态            | 素材文件（`ASSET_MAP` 键值）           | 类型  | 建议帧率  | 说明                           | 扩展预留 |
+| ------------- | ------------------------------ | --- | ----- | ---------------------------- | ---- |
+| IDLE          | `试.gif` → 后续替换 `王涵_idle.gif`   | gif | 6-10  | 呼吸、眨眼等小动作                    | -    |
+| WALKING       | `试.gif` → `王涵_walking.gif`     | gif | 12-15 | 左右腿交替行走                      | -    |
+| DRAGGING      | `试.png` → `王涵_dragging.png`    | png | -     | 静态图片，显示被抓住的样子                | -    |
+| RELEASED      | `试.gif` → `王涵_released.gif`    | gif | 15    | 落地缓冲动画                       | -    |
+| EATING        | `试.gif` → `王涵_eating.gif`      | gif | 20    | 吃猪蹄的完整动作                     | -    |
+| ASKING\_FOOD  | `试.gif` → `王涵_asking_food.gif` | gif | 12    | 期待、招手等动作                     | -    |
+| FEEDING       | `试.gif` → `王涵_feeding.gif`     | gif | 20    | 吃东西然后吐出豆腐                    | -    |
+| SLEEPING      | `试.gif` → `王涵_sleeping.gif`    | gif | 5     | 睡眠呼吸动画                       | 已使用  |
+| PLAYING       | `试.gif` → `王涵_playing.gif`     | gif | 15    | 玩耍动作                         | 已使用  |
+| ANGRY         | `试.gif` → `王涵_angry.gif`       | gif | 12    | 生气表情和动作                      | 已使用  |
+| 物品（骨头/豆腐/葡萄汁） | `试_物品东西.png` → 各物品单独 PNG       | png | -     | 葡萄汁横向约 160×120，缩到 **高 80px** | 已使用  |
 
 ***
 
@@ -221,36 +221,37 @@
 
 ## 5.技术栈规则
 
-| 分类     | 技术                 | 版本 / 说明                                                                        |
-| ------ | ------------------ | ----------------------------------------------------------------------------- |
-| 编程语言   | Python             | 3.13+（主开发）；至少 3.10 才能跑 PySide6 + PyInstaller onedir                              |
-| GUI框架  | PySide6            | GUI 框架，支持透明窗口、无边框、托盘、右键菜单                                                        |
-| 状态管理   | FSM（有限状态机）        | `src/pet_state_machine.py` 自定义实现                                                 |
-| 动画处理   | QMovie + QPixmap   | GIF 通过 `QMovie.setSpeed(fps*10)` 控制播放速度；静态 PNG 通过 `QPixmap.scaled(KeepAspectRatio, Smooth)` 等比缩放。**运行时尺寸改从 `data/settings.json` 的 `AppConfig(pet_height, always_on_top)` 读取，`PetAnimator.apply_app_config` 在启动/改设置后生效。** |
-| 免责声明   | PySide6 QDialog    | `src/consent.py`：倒计时 + 滚动到底才能点继续，consent 版本号管理                            |
-| 打包工具   | PyInstaller        | onedir 模式（比 onefile 启动快，好调试）                                                         |
-| 安装包制作  | Inno Setup 6+      | `scripts/build_installer.iss`：现代向导、自定义安装目录、桌面快捷方式/开机自启、卸载二次确认保留数据                |
-| 图像处理   | Pillow             | 素材预处理工具链（`assets-collect/frames_to_gif.py` 合成 3:4 透明 GIF、`check_image_sizes.py` 批量看 W×H） |
-| 视频抽帧   | FFmpeg（子进程调用）    | `assets-collect/video_to_frames_and_gif.py`：录屏 mp4 → 按 fps/crop 抽 PNG → 合 GIF（**不做 bundle 解包**） |
-| 网络请求   | requests + Selenium | B站 WBI 本地签名；抖音 Selenium 扫码登录 + yt-dlp 下载（yt-dlp 以子进程方式调用）                      |
-| 数据存储   | JSON               | 显示设置 `data/settings.json`（窗口置顶/宠物高度）、`consent.json`、爬虫 Cookie 双快照（json + Netscape txt 两份）                                  |
-| 外部工具   | FFmpeg / 便携版 Chrome | support/ 下分放：`support/ffmpeg.exe`、`support/Chrome/`（yt-dlp、Selenium 用，独立 Profile-Dir）          |
-| 打包主入口  | `scripts/build_all.py` | 一键：exe → 绿色版 zip → 安装包 exe → 源码 zip（4 步 3 产物）                                           |
+| 分类    | 技术                     | 版本 / 说明                                                                                                                                                                                                                                      |
+| ----- | ---------------------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| 编程语言  | Python                 | 3.13+（主开发）；至少 3.10 才能跑 PySide6 + PyInstaller onedir                                                                                                                                                                                          |
+| GUI框架 | PySide6                | GUI 框架，支持透明窗口、无边框、托盘、右键菜单                                                                                                                                                                                                                    |
+| 状态管理  | FSM（有限状态机）             | `src/pet_state_machine.py` 自定义实现                                                                                                                                                                                                             |
+| 动画处理  | QMovie + QPixmap       | GIF 通过 `QMovie.setSpeed(fps*10)` 控制播放速度；静态 PNG 通过 `QPixmap.scaled(KeepAspectRatio, Smooth)` 等比缩放。**运行时尺寸改从** **`data/settings.json`** **的** **`AppConfig(pet_height, always_on_top)`** **读取，`PetAnimator.apply_app_config`** **在启动/改设置后生效。** |
+| 免责声明  | PySide6 QDialog        | `src/consent.py`：倒计时 + 滚动到底才能点继续，consent 版本号管理                                                                                                                                                                                               |
+| 打包工具  | PyInstaller            | onedir 模式（比 onefile 启动快，好调试）                                                                                                                                                                                                                 |
+| 安装包制作 | Inno Setup 6+          | `scripts/build_installer.iss`：现代向导、自定义安装目录、桌面快捷方式/开机自启、卸载二次确认保留数据                                                                                                                                                                            |
+| 图像处理  | Pillow                 | 素材预处理工具链（`assets-collect/frames_to_gif.py` 合成 3:4 透明 GIF、`check_image_sizes.py` 批量看 W×H）                                                                                                                                                     |
+| 视频抽帧  | FFmpeg（子进程调用）          | `assets-collect/video_to_frames_and_gif.py`：录屏 mp4 → 按 fps/crop 抽 PNG → 合 GIF（**不做 bundle 解包**）                                                                                                                                              |
+| 网络请求  | requests + Selenium    | B站 WBI 本地签名；抖音 Selenium 扫码登录 + yt-dlp 下载（yt-dlp 以子进程方式调用）                                                                                                                                                                                    |
+| 数据存储  | JSON                   | 显示设置 `data/settings.json`（窗口置顶/宠物高度）、`consent.json`、爬虫 Cookie 双快照（json + Netscape txt 两份）                                                                                                                                                    |
+| 外部工具  | FFmpeg / 便携版 Chrome    | support/ 下分放：`support/ffmpeg.exe`、`support/Chrome/`（yt-dlp、Selenium 用，独立 Profile-Dir）                                                                                                                                                        |
+| 打包主入口 | `scripts/build_all.py` | 一键：exe → 绿色版 zip → 安装包 exe → 源码 zip（4 步 3 产物）                                                                                                                                                                                                |
 
 ***
 
-## 6.打包 & 发布策略（§6 重写 — v3 已落地实现）
+## 6.打包 & 发布策略
 
 ### 6.1 资源路径处理策略（四函数分离，`src/resource_manager.py` 已实现）
 
-| 资源类型               | 处理方式                                 | 说明                                                                    |
-| ------------------ | ------------------------------------ | --------------------------------------------------------------------- |
-| 只读资源（assets/ 图片、动画） | **打包进 `_internal/assets`**（PyInstaller datas） | 开发态：项目根目录；打包后：`sys._MEIPASS/assets/`                                    |
-| 运行时数据（data/）      | **exe 同目录**（`{app}/data`）                | `settings.json` / `consent.json` / `cookies.*`，卸载默认保留                                           |
-| 输出目录（output/）     | **exe 同目录**（`{app}/output`）               | B站/抖音爬虫下载的视频封面等，用户直接访问                                              |
-| 外部工具（support/）    | **exe 同目录**（`{app}/support`）              | `ffmpeg.exe`、便携版 Chrome + Profile-Dir，体积大不进 PyInstaller datas，单独随绿色版/安装包分发                  |
+| 资源类型                | 处理方式                                              | 说明                                                                         |
+| ------------------- | ------------------------------------------------- | -------------------------------------------------------------------------- |
+| 只读资源（assets/ 图片、动画） | **打包进** **`_internal/assets`**（PyInstaller datas） | 开发态：项目根目录；打包后：`sys._MEIPASS/assets/`                                       |
+| 运行时数据（data/）        | **exe 同目录**（`{app}/data`）                         | `settings.json` / `consent.json` / `cookies.*`，卸载默认保留                      |
+| 输出目录（output/）       | **exe 同目录**（`{app}/output`）                       | B站/抖音爬虫下载的视频封面等，用户直接访问                                                     |
+| 外部工具（support/）      | **exe 同目录**（`{app}/support`）                      | `ffmpeg.exe`、便携版 Chrome + Profile-Dir，体积大不进 PyInstaller datas，单独随绿色版/安装包分发 |
 
 四函数约定：
+
 ```
 get_resource_path(p) ── 开发态: / ; 打包后: sys._MEIPASS/   （只读资产）
 get_data_path(p)     ── 开发态: / ; 打包后: exe同目录/       （用户数据，可写）
@@ -293,28 +294,28 @@ scripts/build_all.py                  ← 一键总入口（默认产物：绿�
 
 ### 6.3 图标规范（**两个图标文件，分离职责**）
 
-> 项目**不做代码签名**（避免首次启动 SmartScreen 提示签名不符的警告 + 证书采购额外成本）。仅嵌入 VS_VERSIONINFO 资源，`pet.exe → 属性 → 详细信息` 能看到发布者/版本号即可。
+> 项目**不做代码签名**（避免首次启动 SmartScreen 提示签名不符的警告 + 证书采购额外成本）。仅嵌入 VS\_VERSIONINFO 资源，`pet.exe → 属性 → 详细信息` 能看到发布者/版本号即可。
 
-| 用途              | 文件路径                       | 推荐尺寸                   | 当前状态    |
-| --------------- | -------------------------- | ---------------------- | ------- |
-| 主程序图标（pet.exe）     | `assets/icons/app.ico`      | **256×256**（ico 自动含 16/32/48/64/128/256 一套） | 待准备（缺失时用 PyInstaller 默认） |
-| 安装包向导图标（setup.exe） | `assets/icons/installer.ico`| **256×256**（ico 同上）        | 待准备（缺失时 Inno Setup 用默认） |
-| Inno Setup 向导左侧横幅图     | `assets/icons/WizardImage.bmp` | **164×314 px**（100% 缩放，96DPI） | 可选，缺失时向导为纯色 |
-| Inno Setup 小方形图        | `assets/icons/WizardSmallImage.bmp` | **55×58 px**       | 可选，缺失时不显示 |
+| 用途                 | 文件路径                                | 推荐尺寸                                        | 当前状态                     |
+| ------------------ | ----------------------------------- | ------------------------------------------- | ------------------------ |
+| 主程序图标（pet.exe）     | `assets/icons/app.ico`              | **256×256**（ico 自动含 16/32/48/64/128/256 一套） | 待准备（缺失时用 PyInstaller 默认） |
+| 安装包向导图标（setup.exe） | `assets/icons/installer.ico`        | **256×256**（ico 同上）                         | 待准备（缺失时 Inno Setup 用默认）  |
+| Inno Setup 向导左侧横幅图 | `assets/icons/WizardImage.bmp`      | **164×314 px**（100% 缩放，96DPI）               | 可选，缺失时向导为纯色              |
+| Inno Setup 小方形图    | `assets/icons/WizardSmallImage.bmp` | **55×58 px**                                | 可选，缺失时不显示                |
 
 在 `scripts/pet.spec` 里写了自动 fallback：**图标文件不存在也不报错**，打包不会阻塞。
 
 ### 6.4 PyInstaller onedir 模式关键配置（`scripts/pet.spec`）
 
-| 配置项 | 取值 | 说明 |
-|---|---|---|
-| 模式 | onedir（EXE + COLLECT 两段） | **弃用 v2 文档推荐的 `--onefile`** — onedir 启动快 3~8 秒，用户卸载升级不用重新解压整个 app 到 temp |
-| datas | `(ASSETS_DIR, 'assets')` | 整个 `assets/` 目录打包进 `_MEIPASS/assets/`，素材随 exe |
-| console | False（`--windowed`） | 没有终端黑窗；爬虫/协议弹窗里所有阻塞交互都走 PySide6 Dialog，不允许 `input()` |
-| hiddenimports | PySide6 6 个模块 + selenium + requests | 显式声明更稳 |
-| UPX | 开启，但排除所有 Qt6 dll + python3*.dll | UPX 压 Qt 会导致启动崩溃 |
-| version | `VSVersionInfo` 四元组版本 | pet.exe 属性页显示「净无欲-王涵桌面电子宠物 / FileVersion / CompanyName=锐尘ruichen」，【不是】代码签名 |
-| icon | `assets/icons/app.ico` if exists else None | 自动 fallback |
+| 配置项           | 取值                                         | 说明                                                                            |
+| ------------- | ------------------------------------------ | ----------------------------------------------------------------------------- |
+| 模式            | onedir（EXE + COLLECT 两段）                   | **弃用 v2 文档推荐的** **`--onefile`** — onedir 启动快 3\~8 秒，用户卸载升级不用重新解压整个 app 到 temp |
+| datas         | `(ASSETS_DIR, 'assets')`                   | 整个 `assets/` 目录打包进 `_MEIPASS/assets/`，素材随 exe                                 |
+| console       | False（`--windowed`）                        | 没有终端黑窗；爬虫/协议弹窗里所有阻塞交互都走 PySide6 Dialog，不允许 `input()`                          |
+| hiddenimports | PySide6 6 个模块 + selenium + requests        | 显式声明更稳                                                                        |
+| UPX           | 开启，但排除所有 Qt6 dll + python3\*.dll           | UPX 压 Qt 会导致启动崩溃                                                              |
+| version       | `VSVersionInfo` 四元组版本                      | pet.exe 属性页显示「净无欲-王涵桌面电子宠物 / FileVersion / CompanyName=锐尘ruichen」，【不是】代码签名    |
+| icon          | `assets/icons/app.ico` if exists else None | 自动 fallback                                                                   |
 
 ### 6.5 安装包（Inno Setup）关键行为
 
@@ -323,11 +324,12 @@ scripts/build_all.py                  ← 一键总入口（默认产物：绿�
 - **开始菜单**：程序组 + 卸载快捷方式。
 - **安装后启动**：`[Run]` 勾选 "立即启动"。
 - **卸载二次确认**：卸载到最后弹 MsgBox 问"是否同时删除 data/output/support/Chrome 用户资料？"——默认"否"保留用户数据，选"是"才清空。
-- **`uninsneveruninstall` 标签**：`data/`、`output/`、`support/` 目录即使勾了卸载也不自动删，防止误操作把爬虫下载的几十 G 视频一锅端。
+- **`uninsneveruninstall`** **标签**：`data/`、`output/`、`support/` 目录即使勾了卸载也不自动删，防止误操作把爬虫下载的几十 G 视频一锅端。
 
 ### 6.6 打包后用户侧目录结构
 
-**绿色版解压后 / 安装包安装到 `C:\Program Files\DesktopPet\`：**
+**绿色版解压后 / 安装包安装到** **`C:\Program Files\DesktopPet\`：**
+
 ```
 DesktopPet/
 ├── 启动宠物.bat                （绿色版独有，双击代替找 pet.exe）
@@ -355,15 +357,15 @@ DesktopPet/
 `python scripts/build_all.py` 末尾会自动生成 `release/DesktopPet-Source-{version}.zip`，
 **严格排除以下目录/文件**（法务/体积敏感）：
 
-| 排除规则 | 原因 |
-|---|---|
-| `dist/`、`build/`、`release/`、`.venv/` | 构建产物、虚拟环境，体积大，源码分发不需要 |
-| `__pycache__/`、`*.pyc`、`.idea/`、`.vscode/`、`*.log` | IDE/运行垃圾 |
-| `support/**`（除 `support/README.md`）| 外部二进制工具（ffmpeg、便携 Chrome 体积几十~几百 MB），与源代码无关 |
-| **`assets-collect/`**（**整个目录排除**） | 本地私有素材提取工具链，不进入任何公开发布物（用户之前明确说明"不属于这个项目"） |
-| `data/*.json`、`data/*.txt` | 用户隐私数据（consent、cookies 等） |
-| `output/**` | 爬虫下载的媒体文件，版权 + 体积敏感 |
-| `assets/*.gif`、`assets/*.mp3` | 试验 GIF/音效（gitignore 已排除），正式素材替换后可按需选择是否打包进源码 zip |
+| 排除规则                                               | 原因                                               |
+| -------------------------------------------------- | ------------------------------------------------ |
+| `dist/`、`build/`、`release/`、`.venv/`               | 构建产物、虚拟环境，体积大，源码分发不需要                            |
+| `__pycache__/`、`*.pyc`、`.idea/`、`.vscode/`、`*.log` | IDE/运行垃圾                                         |
+| `support/**`（除 `support/README.md`）                | 外部二进制工具（ffmpeg、便携 Chrome 体积几十\~几百 MB），与源代码无关     |
+| **`assets-collect/`**（**整个目录排除**）                  | 本地私有素材提取工具链，不进入任何公开发布物（用户之前明确说明"不属于这个项目"）        |
+| `data/*.json`、`data/*.txt`                         | 用户隐私数据（consent、cookies 等）                        |
+| `output/**`                                        | 爬虫下载的媒体文件，版权 + 体积敏感                              |
+| `assets/*.gif`、`assets/*.mp3`                      | 试验 GIF/音效（gitignore 已排除），正式素材替换后可按需选择是否打包进源码 zip |
 
 ***
 
@@ -437,14 +439,16 @@ Desktop Pet/
 ```
 
 > ⚠ **特别声明**：`assets-collect/` 仅用于**个人学习+本地素材生产**（录屏→抽帧→合 GIF，不走逆向/解包路线）。**绝不**：
+>
 > 1. 随 `release/` 三个产物打包；
 > 2. 进入公开仓库（发布前可在 `.gitignore` 把 `# assets-collect/` 行的 `#` 取消注释整体排除）；
 > 3. 用于商业用途或二次分发。
 >
 > 🛑 原 v1 方案（UnityPy/Frida 解影游加密 bundle）已废弃：
+>
 > - 8727/8735 个 bundle 为自定义 AES 加密，IL2CPP 后端 `SetAssetBundleDecryptKey` 无符号且 key 未落在可扫描内存区；
 > - 对应的 `scan_bundles.py / extract_assets.py / bundle_decrypt.py / frida_hook_key.py`、`bundles-local/`、`inventory.json` **用户已手动删除**，文档不再维护。
-> - 之后所有素材统一走「Win+Alt+R 录屏 → 达芬奇裁剪抠透明 → frames_to_gif.py 合 3:4 GIF」的合法合理使用链路。
+> - 之后所有素材统一走「Win+Alt+R 录屏 → 达芬奇裁剪抠透明 → frames\_to\_gif.py 合 3:4 GIF」的合法合理使用链路。
 
 ***
 
@@ -452,54 +456,54 @@ Desktop Pet/
 
 ### 8.1 第一阶段：基础功能 ✅ 已全部实现
 
-| 序号 | 任务    | 状态      |
-| -- | ----- | ------- |
-| 1  | 项目初始化 | ✅ 已完成   |
-| 2  | 透明窗口  | ✅ 已完成   |
-| 3  | 状态机基础 | ✅ 已完成（10 状态） |
-| 4  | 待机/走路/拖拽/松开 | ✅ 已完成 |
-| 5  | 右键菜单  | ✅ 已完成（含拓展功能→抖音/B站/ihan/设置/退出） |
-| 6  | 首次启动免责声明 | ✅ 已完成（consent v1.4：倒计时 + 滚到底） |
+| 序号 | 任务          | 状态                            |
+| -- | ----------- | ----------------------------- |
+| 1  | 项目初始化       | ✅ 已完成                         |
+| 2  | 透明窗口        | ✅ 已完成                         |
+| 3  | 状态机基础       | ✅ 已完成（10 状态）                  |
+| 4  | 待机/走路/拖拽/松开 | ✅ 已完成                         |
+| 5  | 右键菜单        | ✅ 已完成（含拓展功能→抖音/B站/ihan/设置/退出） |
+| 6  | 首次启动免责声明    | ✅ 已完成（consent v1.4：倒计时 + 滚到底） |
 
 ### 8.2 第二阶段：高级功能 ✅ 已全部实现
 
-| 序号 | 任务    | 状态      |
-| -- | ----- | ------- |
-| 7  | 吃东西功能 | ✅ 已完成   |
-| 8  | 求投喂功能 | ✅ 已完成   |
-| 9  | 喂食功能  | ✅ 已完成   |
-| 10 | 睡觉/玩耍/生气状态 | ✅ 已完成（ASSET_MAP 映射已写，换正式素材即生效） |
-| 11 | 代理设置  | ✅ 已完成（main_window 设置对话框里 HTTP/SOCKS5h/鉴权） |
+| 序号 | 任务         | 状态                                         |
+| -- | ---------- | ------------------------------------------ |
+| 7  | 吃东西功能      | ✅ 已完成                                      |
+| 8  | 求投喂功能      | ✅ 已完成                                      |
+| 9  | 喂食功能       | ✅ 已完成                                      |
+| 10 | 睡觉/玩耍/生气状态 | ✅ 已完成（ASSET\_MAP 映射已写，换正式素材即生效）            |
+| 11 | 代理设置       | ✅ 已完成（main\_window 设置对话框里 HTTP/SOCKS5h/鉴权） |
 
 ### 8.3 第三阶段：拓展功能 ✅ 已集成
 
-| 序号 | 任务      | 状态      |
-| -- | ------- | ------- |
-| 12 | B站爬虫集成 | ✅ 已集成   |
-| 13 | 抖音爬虫   | ✅ 已集成（登录循环修复、置顶视频过滤修复） |
-| 14 | ihan 粉丝站彩蛋 | ✅ 已集成 |
+| 序号 | 任务                     | 状态                                             |
+| -- | ---------------------- | ---------------------------------------------- |
+| 12 | B站爬虫集成                 | ✅ 已集成                                          |
+| 13 | 抖音爬虫                   | ✅ 已集成（登录循环修复、置顶视频过滤修复）                         |
+| 14 | ihan 粉丝站彩蛋             | ✅ 已集成                                          |
 | 15 | 便携 Chrome + Cookie 双快照 | ✅ 已实现（3 处登录数据：Profile-Dir + json + txt，菜单一键清除） |
 
 ### 8.4 第四阶段：打包封装 ✅ 已落地
 
-| 序号 | 任务   | 状态      |
-| -- | ---- | ------- |
-| 16 | PyInstaller onedir 规范打包（pet.spec） | ✅ 已完成：datas/assets、version info、UPX 排除 Qt dll |
-| 17 | 绿色版 zip 构建脚本（build_portable.py） | ✅ 已完成 |
-| 18 | Inno Setup 安装包（build_installer.iss + py） | ✅ 已完成：自定义目录/快捷方式/开机自启/卸载二次确认 |
-| 19 | 源码 zip 打包（排除 support/.venv/assets-collect）| ✅ 已完成（build_all.py 末尾自动生成） |
-| 20 | 一键总入口 build_all.py --version --skip --only | ✅ 已完成 |
+| 序号 | 任务                                          | 状态                                            |
+| -- | ------------------------------------------- | --------------------------------------------- |
+| 16 | PyInstaller onedir 规范打包（pet.spec）           | ✅ 已完成：datas/assets、version info、UPX 排除 Qt dll |
+| 17 | 绿色版 zip 构建脚本（build\_portable.py）            | ✅ 已完成                                         |
+| 18 | Inno Setup 安装包（build\_installer.iss + py）   | ✅ 已完成：自定义目录/快捷方式/开机自启/卸载二次确认                  |
+| 19 | 源码 zip 打包（排除 support/.venv/assets-collect）  | ✅ 已完成（build\_all.py 末尾自动生成）                   |
+| 20 | 一键总入口 build\_all.py --version --skip --only | ✅ 已完成                                         |
 
 ### 8.5 第五阶段：素材 & 正式发布（进行中）
 
-| 序号 | 任务     | 状态      |
-| -- | ------ | ------- |
-| 21 | 人物动作素材制作（10 个状态 GIF + 1 拖拽静态） | 🔧 进行中（达芬奇裁紧 → frames_to_gif.py，3:4 基准） |
-| 22 | 物品素材（骨头/葡萄汁/豆腐单独 PNG）          | 🔧 进行中 |
-| 23 | 应用程序图标（app.ico + installer.ico）       | 待准备（尺寸规范见 §6.3） |
-| 24 | 音效替换（试.mp3 → 正式动作音）               | 待准备 |
-| 25 | 替换 ASSET_MAP 映射（`src/pet_animator.py:34`）| 素材到位后改一行 |
-| 26 | 正式版本号打 tag，跑 `build_all.py` 产出 release/ 3 个产物 | 最后一步 |
+| 序号 | 任务                                            | 状态                                        |
+| -- | --------------------------------------------- | ----------------------------------------- |
+| 21 | 人物动作素材制作（10 个状态 GIF + 1 拖拽静态）                 | 🔧 进行中（达芬奇裁紧 → frames\_to\_gif.py，3:4 基准） |
+| 22 | 物品素材（骨头/葡萄汁/豆腐单独 PNG）                         | 🔧 进行中                                    |
+| 23 | 应用程序图标（app.ico + installer.ico）               | 待准备（尺寸规范见 §6.3）                           |
+| 24 | 音效替换（试.mp3 → 正式动作音）                           | 待准备                                       |
+| 25 | 替换 ASSET\_MAP 映射（`src/pet_animator.py:34`）    | 素材到位后改一行                                  |
+| 26 | 正式版本号打 tag，跑 `build_all.py` 产出 release/ 3 个产物 | 最后一步                                      |
 
 ***
 
@@ -507,40 +511,40 @@ Desktop Pet/
 
 ### 9.1 图片资源注意事项
 
-| 事项   | 说明                                                                                              |
-| ---- | ----------------------------------------------------------------------------------------------- |
-| 图片格式 | 推荐 **PNG**（支持透明背景），动画用 **GIF**（Pillow 2-pass 调色板 dither=bayer:bayer_scale=3 画质好） |
-| 人物比例 | **宽:高 = 3:4 竖图**（基准：306×372 试验图），典型原始制作 360×480 或 480×640；程序统一缩到显示 180×240                          |
-| 物品尺寸 | 原始导出 120~160px 高；程序按 `ITEM_HEIGHT=80` 缩                                                          |
-| 图标尺寸 | **256×256 方形 PNG**（app.ico/installer.ico），.ico 文件里最好自带 16/32/48/64/128/256 六档尺寸                                  |
-| 图片命名 | 按状态英文小写：`idle.gif` `walking.gif` `dragging.png` `bone.png` `grape_juice.png` |
-| 引用保存 | PySide6 代码里所有 QMovie / QPixmap 对象必须 `self._movie` / `self._pixmap` 保留引用，避免 GC 导致"显示空白"                      |
-| 尺寸预检 | `python assets-collect/check_image_sizes.py --folder <路径>` 一键看 W×H，不用装看图软件                                             |
+| 事项   | 说明                                                                                     |
+| ---- | -------------------------------------------------------------------------------------- |
+| 图片格式 | 推荐 **PNG**（支持透明背景），动画用 **GIF**（Pillow 2-pass 调色板 dither=bayer:bayer\_scale=3 画质好）      |
+| 人物比例 | **宽:高 = 3:4 竖图**（基准：306×372 试验图），典型原始制作 360×480 或 480×640；程序统一缩到显示 180×240             |
+| 物品尺寸 | 原始导出 120\~160px 高；程序按 `ITEM_HEIGHT=80` 缩                                               |
+| 图标尺寸 | **256×256 方形 PNG**（app.ico/installer.ico），.ico 文件里最好自带 16/32/48/64/128/256 六档尺寸        |
+| 图片命名 | 按状态英文小写：`idle.gif` `walking.gif` `dragging.png` `bone.png` `grape_juice.png`           |
+| 引用保存 | PySide6 代码里所有 QMovie / QPixmap 对象必须 `self._movie` / `self._pixmap` 保留引用，避免 GC 导致"显示空白" |
+| 尺寸预检 | `python assets-collect/check_image_sizes.py --folder <路径>` 一键看 W×H，不用装看图软件             |
 
 ### 9.2 打包注意事项
 
-| 事项             | 说明                                                                                                                                   |
-| -------------- | ------------------------------------------------------------------------------------------------------------------------------------ |
-| 产物              | **跑一个命令就全出**：`python scripts/build_all.py`；需要单独跑时 `--only portable` / `--only installer` / `--skip exe`                                 |
-| 模式              | 用 **onedir（EXE + COLLECT）**，不要回 v2 的 `--onefile` — onedir 启动快、好排查、data/output/support 路径都在 exe 同目录，符合用户预期。                           |
-| 控制台             | `console=False`，爬虫和协议交互**禁止用 `input()` / `print()`** — 全部走 QDialog（抖音扫码用便携 Chrome，日志走 Qt signal 显示在 GUI 对话框里）。 |
-| 图标缺失不阻塞打包        | `scripts/pet.spec` 和 `build_installer.iss` 都做了 `if FileExists(...)` fallback，没准备图标也能打包（只是默认图标）。                                         |
-| 首次启动免责声明         | 打包后**一定有效**（`consent.py` 的 `get_data_path` 已按打包态定位到 `{app}/data/consent.json`），条款更新 bump `CONSENT_VERSION` 就行。                |
-| support/ 外部工具分发策略 | **不进 PyInstaller datas**；绿色版 zip 里只放 `support/README.md`，ffmpeg / 便携 Chrome 按 README 由用户自行放到安装目录下（因为体积 + 版权分发问题）。            |
-| 升级不覆盖用户数据        | Inno Setup 的 `[Dirs] uninsneveruninstall` + 卸载 MsgBox 默认保留 data/output/support/Chrome 3 处，防止覆盖用户已扫码登录态 / 已下载视频。              |
-| assets-collect/ 不发布    | 整个目录：① 不进绿色版 zip ② 不进安装包 ③ 不进 Source zip（`shutil.make_archive(base_dir='src ...', exclude_dirs=['assets-collect', ...])`）；发布前可在 .gitignore 取消 `# assets-collect/` 行注释整目录排除。 |
+| 事项                  | 说明                                                                                                                                                                          |
+| ------------------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| 产物                  | **跑一个命令就全出**：`python scripts/build_all.py`；需要单独跑时 `--only portable` / `--only installer` / `--skip exe`                                                                     |
+| 模式                  | 用 **onedir（EXE + COLLECT）**，不要回 v2 的 `--onefile` — onedir 启动快、好排查、data/output/support 路径都在 exe 同目录，符合用户预期。                                                                  |
+| 控制台                 | `console=False`，爬虫和协议交互**禁止用** **`input()`** **/** **`print()`** — 全部走 QDialog（抖音扫码用便携 Chrome，日志走 Qt signal 显示在 GUI 对话框里）。                                                  |
+| 图标缺失不阻塞打包           | `scripts/pet.spec` 和 `build_installer.iss` 都做了 `if FileExists(...)` fallback，没准备图标也能打包（只是默认图标）。                                                                             |
+| 首次启动免责声明            | 打包后**一定有效**（`consent.py` 的 `get_data_path` 已按打包态定位到 `{app}/data/consent.json`），条款更新 bump `CONSENT_VERSION` 就行。                                                              |
+| support/ 外部工具分发策略   | **不进 PyInstaller datas**；绿色版 zip 里只放 `support/README.md`，ffmpeg / 便携 Chrome 按 README 由用户自行放到安装目录下（因为体积 + 版权分发问题）。                                                           |
+| 升级不覆盖用户数据           | Inno Setup 的 `[Dirs] uninsneveruninstall` + 卸载 MsgBox 默认保留 data/output/support/Chrome 3 处，防止覆盖用户已扫码登录态 / 已下载视频。                                                             |
+| assets-collect/ 不发布 | 整个目录：① 不进绿色版 zip ② 不进安装包 ③ 不进 Source zip（`shutil.make_archive(base_dir='src ...', exclude_dirs=['assets-collect', ...])`）；发布前可在 .gitignore 取消 `# assets-collect/` 行注释整目录排除。 |
 
 ### 9.3 爬虫注意事项（v2 内容保留，保持一致）
 
-| 事项                  | 说明                                                                                                                                                                                                                                                                           |
-| ------------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| 反爬机制                | B站 / 抖音都有严格的 UA / 自动化指纹检测，Selenium 启动时务必：`--disable-blink-features=AutomationControlled` + `excludeSwitches: ['enable-automation']` + CDP 注入隐藏 `navigator.webdriver`；请求间隔加随机抖动。                                                                                                                   |
-| 抖音登录态与 Cookie 存放  | **共 3 处，均允许用户一键删除**（GUI 菜单：拓展功能 → 抖音 → 清除登录数据（退出登录））：<br>① `support/Chrome/Profile-Douyin/` — 便携 Chrome 的独立用户资料目录（**最完整**，含 Cookie / localStorage / 缓存 / 登录态）<br>② `data/douyin_cookies.json` — Selenium / requests 注入用的快照<br>③ `data/douyin_cookies.txt` — yt-dlp 下载时 `--cookies` 需要的 Netscape 格式。<br>**首次登录**：菜单「登录/重新登录（扫码）」→ 弹便携版 Chrome → 用抖音 App 扫码 → 回 GUI 弹窗确认「登录完成」。不需要、也绝对不应该在代码里写账号密码。 |
-| 抖音下载                | 不自己手写 a_bogus/X-Bogus 签名（维护成本极高）。**统一交给 yt-dlp + cookies.txt 下载**，yt-dlp 官方长期跟进抖音签名 / 反爬维护。                                                                                                                                                                                                          |
-| B站登录                | B 站空间页目前大部分内容不需要登录；WBI 签名算法在本地做。如果要抓隐私空间 / 充电内容，可复用抖音的同一套「便携 Chrome + 独立 Profile-Dir + Cookie 双快照」方案（Profile 可以不共用，建 `support/Chrome/Profile-Bilibili`）。                                                                                                                      |
-| 数据存储                | 爬取得到的视频、封面等文件按平台分目录：`output/bilibili/`、`output/douyin/`；爬虫日志和 Cookie 存在 `data/` 下。                                                                                                                                                                            |
-| 用户隐私                | 登录态文件（cookie.json / txt / Chrome Profile 目录）严禁提交到 Git / 打包公开共享。`.gitignore` 中 `data/*.json`、`data/*.txt`、`support/Chrome/Profile-*` 已建议忽略。                                                                                                                                                                    |
-| GUI 线程隔离            | Selenium 爬虫一律跑在 QThread Worker（`src/crawler/gui_workers.py`），不阻塞主 UI；日志 / 成功 / 失败 / 需用户交互 全部走 Qt 信号，避免在 PyInstaller --windowed 打包环境下因 `input()` / 终端导致程序崩溃。                                                                                                                               |
+| 事项               | 说明                                                                                                                                                                                                                                                                                                                                                                                |
+| ---------------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| 反爬机制             | B站 / 抖音都有严格的 UA / 自动化指纹检测，Selenium 启动时务必：`--disable-blink-features=AutomationControlled` + `excludeSwitches: ['enable-automation']` + CDP 注入隐藏 `navigator.webdriver`；请求间隔加随机抖动。                                                                                                                                                                                                   |
+| 抖音登录态与 Cookie 存放 | **共 3 处，均允许用户一键删除**（GUI 菜单：拓展功能 → 抖音 → 清除登录数据（退出登录））：① `support/Chrome/Profile-Douyin/` — 便携 Chrome 的独立用户资料目录（**最完整**，含 Cookie / localStorage / 缓存 / 登录态）② `data/douyin_cookies.json` — Selenium / requests 注入用的快照③ `data/douyin_cookies.txt` — yt-dlp 下载时 `--cookies` 需要的 Netscape 格式。**首次登录**：菜单「登录/重新登录（扫码）」→ 弹便携版 Chrome → 用抖音 App 扫码 → 回 GUI 弹窗确认「登录完成」。不需要、也绝对不应该在代码里写账号密码。 |
+| 抖音下载             | 不自己手写 a\_bogus/X-Bogus 签名（维护成本极高）。**统一交给 yt-dlp + cookies.txt 下载**，yt-dlp 官方长期跟进抖音签名 / 反爬维护。                                                                                                                                                                                                                                                                                      |
+| B站登录             | B 站空间页目前大部分内容不需要登录；WBI 签名算法在本地做。如果要抓隐私空间 / 充电内容，可复用抖音的同一套「便携 Chrome + 独立 Profile-Dir + Cookie 双快照」方案（Profile 可以不共用，建 `support/Chrome/Profile-Bilibili`）。                                                                                                                                                                                                                          |
+| 数据存储             | 爬取得到的视频、封面等文件按平台分目录：`output/bilibili/`、`output/douyin/`；爬虫日志和 Cookie 存在 `data/` 下。                                                                                                                                                                                                                                                                                                |
+| 用户隐私             | 登录态文件（cookie.json / txt / Chrome Profile 目录）严禁提交到 Git / 打包公开共享。`.gitignore` 中 `data/*.json`、`data/*.txt`、`support/Chrome/Profile-*` 已建议忽略。                                                                                                                                                                                                                                        |
+| GUI 线程隔离         | Selenium 爬虫一律跑在 QThread Worker（`src/crawler/gui_workers.py`），不阻塞主 UI；日志 / 成功 / 失败 / 需用户交互 全部走 Qt 信号，避免在 PyInstaller --windowed 打包环境下因 `input()` / 终端导致程序崩溃。                                                                                                                                                                                                                       |
 
 ### 9.4 菜单结构（右键，v3 最终：与代码一致）
 
@@ -594,3 +598,4 @@ Desktop Pet/
 - [ ] 插件热更新机制
 - [ ] 国际化（中文/英文双语）
 - [ ] 跨平台打包（Linux AppImage / macOS DMG，目前脚本都是 Windows 专用）
+

@@ -16,11 +16,11 @@ COMPANY_NAME = "锐尘ruichen"
 
 # 版本号（语义化：主.次.修订）
 # 构建时也可用环境变量 PET_VERSION 覆盖（优先级更高）
-VERSION = "1.0.0"
+VERSION = "0.4.0"
 
 # 产品版本号（exe 属性「产品版本」，通常跟 VERSION 一致或用大版本号如 "1.0"）
 # 构建时也可用环境变量 PET_PRODUCT_VERSION 覆盖（优先级更高）
-PRODUCT_VERSION = "1.0.0"
+PRODUCT_VERSION = "0.4.0"
 
 # —— exe 文件属性（右键 pet.exe → 属性 → 详细信息）——
 # 文件说明（exe 属性「文件说明」，通常跟产品名一致或更简短）
