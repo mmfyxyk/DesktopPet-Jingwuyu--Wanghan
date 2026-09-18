@@ -12,15 +12,23 @@ from PySide6.QtCore import QObject, Signal
 class PetState(Enum):
     """宠物状态枚举"""
     IDLE = "idle"              # 待机
-    WALKING = "walking"       # 行走
-    DRAGGING = "dragging"     # 被拖拽
-    EATING = "eating"         # 吃东西
-    ASKING_FOOD = "asking"    # 求投喂
+    WALKING = "walking"        # 行走（旧，保留兼容，实际用 LEFT/RIGHT）
+    WALKING_LEFT = "walking_left"   # 往左走
+    WALKING_RIGHT = "walking_right" # 往右走
+    DRAGGING = "dragging"     # 被拖拽（第一段，一次性）
+    DRAGGING_2 = "dragging_2"  # 被拖拽（第二段，循环）
+    EATING = "eating"         # 吃东西（第一段）
+    EATING_2 = "eating_2"     # 吃东西（第二段）
+    ASKING = "asking"         # 撒娇（idle随机触发）
+    ASKING_FOOD = "asking_food"  # 求投喂
     FEEDING = "feeding"       # 喂食
     RELEASED = "released"     # 松开（拖拽结束过渡）
     SLEEPING = "sleeping"     # 睡觉（预留）
     PLAYING = "playing"       # 玩耍（预留）
     ANGRY = "angry"           # 生气（预留）
+    KISS = "kiss"              # 亲亲（idle随机）
+    KIDDING = "kidding"        # 玩闹（idle随机）
+    SHOWING = "showing"       # 展示（idle随机）
 
     # ===========================================================================
     # 以下为「框架文档 v3 §3.1 提到的可扩展动作 + 常见情绪/交互状态」占位枚举。
@@ -61,14 +69,35 @@ class PetState(Enum):
 INTERRUPTIBLE = {
     PetState.IDLE: True,
     PetState.WALKING: True,
+    PetState.WALKING_LEFT: True,
+    PetState.WALKING_RIGHT: True,
     PetState.DRAGGING: False,
+    PetState.DRAGGING_2: False,
     PetState.EATING: False,
+    PetState.EATING_2: False,
+    PetState.ASKING: True,
     PetState.ASKING_FOOD: True,
     PetState.FEEDING: False,
     PetState.RELEASED: True,
     PetState.SLEEPING: True,
     PetState.PLAYING: True,
     PetState.ANGRY: True,
+    PetState.KISS: True,
+    PetState.KIDDING: True,
+    PetState.SHOWING: True,
+}
+
+# 状态动画是否只播放一次（True = 播完发 animation_finished 信号，由 InteractionManager 决定下一步）
+# 未列出的状态默认 False（循环播放）
+ONE_SHOT = {
+    PetState.DRAGGING: True,    # dragging1 → 完后检查是否仍在拖拽
+    PetState.EATING: True,      # eating1 → 完后给猪蹄
+    PetState.EATING_2: True,    # eating2 → 完后回idle
+    PetState.FEEDING: True,     # feeding → 完后给豆腐
+    PetState.KISS: True,        # → 回idle
+    PetState.KIDDING: True,     # → 回idle
+    PetState.SHOWING: True,     # → 回idle
+    PetState.ASKING: True,      # → 回idle（idle随机触发）
 }
 
 # =============================================================================

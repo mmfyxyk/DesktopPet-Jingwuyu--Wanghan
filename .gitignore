@@ -3,6 +3,9 @@ __pycache__/
 *.py[cod]
 *.pyo
 *.egg-info/
+
+# Trae plan/spec documents (local only, not for git)
+.trae/documents/
 *.egg
 
 # 虚拟环境

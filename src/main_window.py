@@ -21,7 +21,7 @@ from PySide6.QtWidgets import (
 )
 from PySide6.QtGui import QDesktopServices, QIcon
 
-from .pet_state_machine import PetState, StateMachine
+from .pet_state_machine import PetState, StateMachine, ONE_SHOT
 from .pet_animator import PetAnimator
 from .interaction import InteractionManager
 from .crawler.worker import CrawlerWorker
@@ -1574,13 +1574,17 @@ class PetWindow(QWidget):
     # ======================== 状态管理 ========================
 
     def _on_state_changed(self, old_state, new_state):
-        """状态变化回调"""
-        self._animator.play(new_state)
+        """状态变化回调：统一处理动画播放 + 音效 + 定时器"""
+        if ONE_SHOT.get(new_state, False):
+            self._animator.play_one_shot(new_state)
+        else:
+            self._animator.play(new_state)
+        self._animator.play_sound(new_state)
 
         # 状态切换后更新窗口大小
         self.setFixedSize(self._label.size())
 
-        if new_state == PetState.WALKING:
+        if new_state in (PetState.WALKING_LEFT, PetState.WALKING_RIGHT):
             self._walk_timer.start(WALK_INTERVAL)
         else:
             self._walk_timer.stop()
@@ -1596,10 +1600,23 @@ class PetWindow(QWidget):
         self._idle_timer.start(interval)
 
     def _on_idle_timeout(self):
-        """待机超时，随机进入行走"""
+        """待机超时，随机触发：行走（左/右）、亲亲、玩闹、展示、撒娇"""
         if self._state_machine.state == PetState.IDLE:
-            self._walk_direction = random.choice([1, -1])
-            self._state_machine.transition_to(PetState.WALKING)
+            choice = random.choice(['walk_left', 'walk_right', 'kiss', 'kidding', 'showing', 'asking'])
+            if choice == 'walk_left':
+                self._walk_direction = -1
+                self._state_machine.transition_to(PetState.WALKING_LEFT)
+            elif choice == 'walk_right':
+                self._walk_direction = 1
+                self._state_machine.transition_to(PetState.WALKING_RIGHT)
+            elif choice == 'kiss':
+                self._state_machine.transition_to(PetState.KISS)
+            elif choice == 'kidding':
+                self._state_machine.transition_to(PetState.KIDDING)
+            elif choice == 'showing':
+                self._state_machine.transition_to(PetState.SHOWING)
+            elif choice == 'asking':
+                self._state_machine.transition_to(PetState.ASKING)
 
     def _on_walk(self):
         """行走定时器回调"""
@@ -1611,6 +1628,10 @@ class PetWindow(QWidget):
         if new_x <= 0 or new_x + self.width() >= screen.width():
             self._walk_direction *= -1  # 反向
             new_x = pos.x() + self._walk_direction * WALK_SPEED
+            # 切换行走状态匹配新方向
+            target = PetState.WALKING_RIGHT if self._walk_direction > 0 else PetState.WALKING_LEFT
+            if self._state_machine.state != target:
+                self._state_machine.transition_to(target)
 
         self.move(new_x, pos.y())
 
@@ -1635,10 +1656,9 @@ class PetWindow(QWidget):
                         self._press_pos).manhattanLength()
 
             if distance > DRAG_THRESHOLD and not self._dragging:
-                # 开始拖拽
+                # 开始拖拽（动画和音效由 _on_state_changed 统一处理）
                 self._dragging = True
                 self._state_machine.force_transition(PetState.DRAGGING)
-                self._animator.play_sound(PetState.DRAGGING)
 
             if self._dragging:
                 self.move(event.globalPosition().toPoint() - self._drag_offset)

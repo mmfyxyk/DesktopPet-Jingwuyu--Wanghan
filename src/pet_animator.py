@@ -82,95 +82,44 @@ def apply_app_config(cfg) -> None:
 
 # ======================== 素材映射 ========================
 
-# 状态 → 素材文件映射（后期替换正式素材时改这里）
+# 状态 → 素材文件映射（正式素材，目录 assets/WangHan/JingWuyu/）
 ASSET_MAP = {
-    PetState.IDLE:        ("idle/IDLE_净无欲全身像.gif", "gif", 20),    # (文件名, 类型, FPS)
-    PetState.WALKING:     ("试.gif", "gif", 15),
-    PetState.DRAGGING:    ("dragging/dragging1.gif", "gif", 29),
-    PetState.RELEASED:    ("试.gif", "gif", 15),
-    PetState.EATING:     ("试.gif", "gif", 20),
-    PetState.ASKING_FOOD: ("试.gif", "gif", 12),
-    PetState.FEEDING:     ("feeding/feeding.gif", "gif", 20),
-    PetState.PLAYING:     ("试.gif", "gif", 15),
+    PetState.IDLE:          ("WangHan/JingWuyu/idle/IDLE_净无欲全身像.gif", "gif", 30),
+    PetState.WALKING_LEFT:  ("WangHan/JingWuyu/walking/left_walking.gif", "gif", 30),
+    PetState.WALKING_RIGHT: ("WangHan/JingWuyu/walking/right_walking.gif", "gif", 30),
+    PetState.DRAGGING:      ("WangHan/JingWuyu/dragging/dragging1.gif", "gif", 30),
+    PetState.DRAGGING_2:    ("WangHan/JingWuyu/dragging/dragging2.gif", "gif", 30),
+    PetState.RELEASED:      ("WangHan/JingWuyu/released/released.gif", "gif", 30),
+    PetState.EATING:        ("WangHan/JingWuyu/eating/eating1.gif", "gif", 30),
+    PetState.EATING_2:      ("WangHan/JingWuyu/eating/eating2.gif", "gif", 30),
+    PetState.ASKING:        ("WangHan/JingWuyu/asking/asking.gif", "gif", 30),
+    PetState.ASKING_FOOD:   ("WangHan/JingWuyu/asking_food/asking_food.gif", "gif", 30),
+    PetState.FEEDING:       ("WangHan/JingWuyu/feeding/feeding.gif", "gif", 30),
+    PetState.KISS:          ("WangHan/JingWuyu/kiss/kiss.gif", "gif", 30),
+    PetState.KIDDING:       ("WangHan/JingWuyu/kidding/kidding.gif", "gif", 30),
+    PetState.SHOWING:       ("WangHan/JingWuyu/showing/showing.gif", "gif", 30),
 }
 
 # 音效映射：按状态取对应音效（没列的状态不播音效）
 SOUND_MAP = {
-    PetState.EATING:      "试.mp3",               # 吃东西 → 咀嚼声
-    PetState.ASKING_FOOD: "试.mp3",               # 求投喂 → 肚子咕咕
-    PetState.FEEDING:     "试.mp3",               # 喂食 → 开心吃
-    PetState.DRAGGING:    "dragging/dragging1.mp3",  # 拖拽 → 被抓起的音效
-    #PetState.SLEEPING:    "试.mp3",               # 睡觉 → 呼噜
-    #PetState.ANGRY:       "试.mp3",               # 生气 → 哼
-    # IDLE / WALKING / RELEASED / PLAYING → 不需要音效
+    PetState.DRAGGING:      "WangHan/JingWuyu/dragging/dragging1.mp3",
+    PetState.RELEASED:      "WangHan/JingWuyu/released/released.mp3",
+    PetState.EATING:        "WangHan/JingWuyu/eating/eating1.mp3",
+    PetState.EATING_2:      "WangHan/JingWuyu/eating/eating2.mp3",
+    PetState.ASKING:        "WangHan/JingWuyu/asking/asking.mp3",
+    PetState.ASKING_FOOD:   "WangHan/JingWuyu/asking_food/asking_food.mp3",
+    PetState.FEEDING:       "WangHan/JingWuyu/feeding/feeding.mp3",
+    PetState.KIDDING:       "WangHan/JingWuyu/kidding/kidding.mp3",
+    PetState.SHOWING:       "WangHan/JingWuyu/showing/showing.mp3",
 }
 
 # 物品图映射：按状态取对应物品图（没列的状态不掉物品）
 ITEM_MAP = {
-    PetState.EATING:      "items/猪蹄.png",      # 骨头
-    PetState.ASKING_FOOD: "items/葡萄汁.png",      # 葡萄汁
-    PetState.FEEDING:     "items/豆腐.png",      # 豆腐
-    # IDLE / WALKING / SLEEPING / ANGRY / PLAYING / DRAGGING → 不掉物品
+    PetState.EATING:        "WangHan/JingWuyu/items/猪蹄.png",
+    PetState.ASKING_FOOD:   "WangHan/JingWuyu/items/葡萄汁.png",
+    PetState.FEEDING:       "WangHan/JingWuyu/items/豆腐.png",
 }
 
-
-# =============================================================================
-# 扩展动作素材占位（框架 v3 §3.1 "可添加：洗澡、生病、开心 等" 共 20 条）
-# —— 新的代码块，**当前整块注释掉（COMMENTED OUT）**，暂不生效 ——
-# 全部用现有「试验素材 试.gif / 试.png / 试_物品东西.png / 试.mp3」暂代。
-# 启用步骤：
-#   1. 先在 src/pet_state_machine.py 里解除 PetState 扩展枚举的注释（会报错，因为
-#      ASSET_MAP 里还没有这些键 → 打开本块即可）；
-#   2. 把下面 # 开头的行解注释；ASSET_MAP.update() 一行默认会在解除注释的同时
-#      自动把 20 条映射加进现有 ASSET_MAP（不用手动改上面那 10 行）；
-#   3. 之后每替换一个正式素材（王涵_happy.gif 等），只需修改这里的
-#      filename 字段，其它文件不用动。
-# ---------------------------------------------------------------------------
-# _EXT_ASSET_MAP = {
-#     # —— 动画类：全部先用 试.gif 暂代 ——
-#     #PetState.SLEEPING:    ("试.gif", "gif", 5),     # 睡觉
-      #PetState.ANGRY:       ("试.gif", "gif", 12),    # 生气
-#     # PetState.HAPPY:        ("试.gif", "gif", 14),  # 开心（情绪高）
-#     # PetState.SAD:          ("试.gif", "gif", 8),   # 委屈/难过
-#     # PetState.SICK:         ("试.gif", "gif", 6),   # 生病（慢）
-#     # PetState.BATHING:      ("试.gif", "gif", 12),  # 洗澡
-#     # PetState.PATTED:       ("试.gif", "gif", 18),  # 被摸头（短动画）
-#     # PetState.POKED:        ("试.gif", "gif", 18),  # 被戳（短动画）
-#     # PetState.SHY:          ("试.gif", "gif", 10),  # 害羞
-#     # PetState.SURPRISED:    ("试.gif", "gif", 16),  # 惊讶
-#     # PetState.YAWN:         ("试.gif", "gif", 8),   # 打哈欠
-#     # PetState.DRINKING:     ("试.gif", "gif", 16),  # 喝水
-#     # PetState.SINGING:      ("试.gif", "gif", 12),  # 唱歌
-#     # PetState.DANCING:      ("试.gif", "gif", 16),  # 跳舞
-#     # PetState.RUNNING:      ("试.gif", "gif", 20),  # 小跑（快）
-#     # PetState.CRYING:       ("试.gif", "gif", 10),  # 哭泣
-#     # PetState.STRETCHING:   ("试.gif", "gif", 12),  # 伸懒腰
-#     # PetState.LAUGHING:     ("试.gif", "gif", 16),  # 大笑
-#     # PetState.ZONING_OUT:   ("试.gif", "gif", 4),   # 放空（最慢）
-#     # PetState.NAPPING:      ("试.gif", "gif", 5),   # 打盹
-#     # PetState.EATING_SNACK: ("试.gif", "gif", 18),  # 吃零食
-#     # PetState.READING:      ("试.gif", "gif", 8),   # 看书/玩手机
-# }
-# # 一次性合并到 ASSET_MAP（解除上面 20 条 + 下面这行注释即可生效）
-# # ASSET_MAP.update(_EXT_ASSET_MAP)
-#
-# # 扩展物品素材占位（框架 §2.2 "可扩展更多食物/物品"，仍先用 试_物品东西.png 暂代）
-# # 替换正式素材时，按"物品名=文件名"格式逐个改即可；交互函数里已预留按 key 取图的入口
-# # _EXT_ITEM_IMAGES = {
-# #     "bone":          "试_物品东西.png",  # 猪蹄 → 骨头（现有 EATING 产出）
-# #     "grape_juice":   "试_物品东西.png",  # 葡萄汁（现有 ASKING_FOOD 刷出来）
-# #     "tofu":          "试_物品东西.png",  # 豆腐（现有 FEEDING 产出）
-# #     "ice_cream":     "试_物品东西.png",  # 冰淇淋（EATING_SNACK 用）
-# #     "milk_tea":      "试_物品东西.png",  # 奶茶（DRINKING 用）
-# #     "phone":         "试_物品东西.png",  # 手机（READING 用）
-# #     "book":          "试_物品东西.png",  # 书（READING 用）
-# #     "gift_box":      "试_物品东西.png",  # 礼物盒（SHY 彩蛋触发）
-# #     "tissue":        "试_物品东西.png",  # 纸巾（CRYING 彩蛋）
-# #     "thermometer":   "试_物品东西.png",  # 体温计（SICK 彩蛋）
-# #     "soap_bubble":   "试_物品东西.png",  # 泡泡（BATHING 彩蛋）
-# #     "microphone":    "试_物品东西.png",  # 麦克风（SINGING 彩蛋）
-# # }
-# =============================================================================
 
 
 def _get_image_size(path: str) -> QSize:
