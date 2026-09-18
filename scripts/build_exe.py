@@ -35,8 +35,7 @@ DIST_DIR = PROJECT_ROOT / 'dist'
 BUILD_DIR = PROJECT_ROOT / 'build'
 PET_DIST_DIR = DIST_DIR / 'pet'          # 最终 exe 输出目录
 
-# 让脚本能 import 同目录下的 app_meta.py
-sys.path.insert(0, str(SCRIPTS_DIR))
+
 
 
 # ============================== 工具函数 ==============================
@@ -107,75 +106,10 @@ def clean_old_output() -> None:
             _print_ok(f"无需清理 {d.relative_to(PROJECT_ROOT)}（不存在）")
 
 
-def generate_version_file(version: str) -> str:
-    """生成 version_info.txt（PyInstaller 的 --version-file 格式）
+def run_pyinstaller(pyinstaller_cmd: str) -> None:
+    """调用 PyInstaller 进行打包（版本信息由 pet.spec 内联，无需环境变量）"""
+    _print_step("开始 PyInstaller 打包（首次可能需要 2-5 分钟）")
 
-    比 spec 里的 version= 参数更可靠——后者在 onedir 模式下有时不生效。
-    从 app_meta.py 读取产品名、公司名、版权等元数据。
-    """
-    from app_meta import (
-        PRODUCT_NAME, COMPANY_NAME, EXE_FILE_DESCRIPTION,
-        INTERNAL_NAME, ORIGINAL_FILENAME, LEGAL_COPYRIGHT,
-        PRODUCT_VERSION,
-    )
-
-    # 版本号转 4 段数字
-    parts = (version + '.0.0.0').split('.')[:4]
-    try:
-        v = tuple(int(p) for p in parts)
-    except ValueError:
-        v = (1, 0, 0, 0)
-    filevers = f"{v[0]},{v[1]},{v[2]},{v[3]}"
-
-    content = f"""VSVersionInfo(
-  ffi=FixedFileInfo(
-    filevers=({filevers}),
-    prodvers=({filevers}),
-    mask=0x3F,
-    flags=0x0,
-    OS=0x40004,
-    fileType=0x1,
-    subtype=0x0,
-    date=(0, 0)
-  ),
-  kids=[
-    StringFileInfo([
-      StringTable(
-        '080404B0',
-        [StringStruct('CompanyName', '{COMPANY_NAME}'),
-         StringStruct('FileDescription', '{EXE_FILE_DESCRIPTION}'),
-         StringStruct('FileVersion', '{version}'),
-         StringStruct('InternalName', '{INTERNAL_NAME}'),
-         StringStruct('LegalCopyright', '{LEGAL_COPYRIGHT}'),
-         StringStruct('OriginalFilename', '{ORIGINAL_FILENAME}'),
-         StringStruct('ProductName', '{PRODUCT_NAME}'),
-         StringStruct('ProductVersion', '{version}')])
-    ]),
-    VarFileInfo([VarStruct('Translation', [2052, 1200])])
-  ]
-)
-"""
-    version_file = BUILD_DIR / 'version_info.txt'
-    BUILD_DIR.mkdir(parents=True, exist_ok=True)
-    version_file.write_text(content, encoding='utf-8')
-    return str(version_file)
-
-
-def run_pyinstaller(pyinstaller_cmd: str, version: str) -> None:
-    """调用 PyInstaller 进行打包
-
-    版本信息通过环境变量传给 spec（spec 里构建 version_info 对象）。
-    用 .spec 文件时不能用 --version-file 命令行参数，只能在 spec 里用 version=。
-    """
-    from app_meta import (
-        PRODUCT_NAME, COMPANY_NAME, EXE_FILE_DESCRIPTION,
-        INTERNAL_NAME, ORIGINAL_FILENAME, LEGAL_COPYRIGHT,
-        PRODUCT_VERSION,
-    )
-
-    _print_step(f"开始 PyInstaller 打包（版本：{version}，首次可能需要 2-5 分钟）")
-
-    # 命令拆分：如果是 "python -m PyInstaller" 形式，按空格分
     if ' ' in pyinstaller_cmd:
         cmd = pyinstaller_cmd.split() + [
             str(SPEC_FILE),
@@ -196,22 +130,9 @@ def run_pyinstaller(pyinstaller_cmd: str, version: str) -> None:
 
     print(f"    执行命令：{' '.join(cmd)}")
 
-    # 通过环境变量把所有元数据传给 spec（spec 里读环境变量构建 version_info）
-    env = os.environ.copy()
-    env['PET_VERSION'] = version
-    env['PET_PRODUCT_VERSION'] = os.environ.get('PET_PRODUCT_VERSION', PRODUCT_VERSION)
-    env['PET_PRODUCT_NAME'] = PRODUCT_NAME
-    env['PET_COMPANY_NAME'] = COMPANY_NAME
-    env['PET_FILE_DESCRIPTION'] = EXE_FILE_DESCRIPTION
-    env['PET_INTERNAL_NAME'] = INTERNAL_NAME
-    env['PET_ORIGINAL_FILENAME'] = ORIGINAL_FILENAME
-    env['PET_LEGAL_COPYRIGHT'] = LEGAL_COPYRIGHT
-
-    # 实时回显输出，方便定位问题
     proc = subprocess.Popen(
         cmd,
         cwd=str(PROJECT_ROOT),
-        env=env,
         stdout=subprocess.PIPE,
         stderr=subprocess.STDOUT,
         text=True,
@@ -225,25 +146,6 @@ def run_pyinstaller(pyinstaller_cmd: str, version: str) -> None:
     ret = proc.wait()
     if ret != 0:
         raise SystemExit(f"PyInstaller 打包失败，退出码 {ret}")
-
-
-def get_version_from_git() -> str:
-    """优先使用 git tag 作为版本号；没有 tag 时用默认 1.0.0（不用 commit hash，
-    因为 pet.spec 里的 VS_VERSIONINFO 需要数字版本号）"""
-    try:
-        proc = subprocess.run(
-            ['git', 'describe', '--tags', '--exact-match'],
-            cwd=str(PROJECT_ROOT),
-            capture_output=True, text=True, timeout=5,
-        )
-        if proc.returncode == 0 and proc.stdout.strip():
-            tag = proc.stdout.strip()
-            # tag 可能带 v 前缀（如 v1.2.3），去掉
-            return tag.lstrip('v')
-    except (FileNotFoundError, subprocess.TimeoutExpired):
-        pass
-    # 没有 tag 时返回默认版本号（必须是数字，VS_VERSIONINFO 要求）
-    return '1.0.0'
 
 
 def verify_output() -> None:
@@ -278,22 +180,24 @@ def verify_output() -> None:
 def main() -> int:
     parser = argparse.ArgumentParser(description='桌面电子宠物 - 代码打包 (PyInstaller)')
     parser.add_argument('--version', default=None,
-                        help='版本号（写入 exe 版本资源；默认：git tag 或日期 YYYYMMDD）')
+                        help='版本号（已内联在 pet.spec 中，请直接修改该文件）')
     args = parser.parse_args()
 
     print("=" * 60)
     print("  桌面电子宠物 - 第一步：代码打包 (PyInstaller)")
     print("=" * 60)
 
-    version = args.version or get_version_from_git()
-    print(f"  版本号：{version}")
+    # 如果命令行指定了版本号，提示用户去改 spec
+    if args.version:
+        print(f"  提示：版本号已内联在 pet.spec 中（VERSION = ...），请直接修改该文件")
+        print(f"  传入的 --version={args.version} 将被忽略")
 
     try:
         check_python_version()
         pyinstaller_cmd = check_pyinstaller()
         check_spec_file()
         clean_old_output()
-        run_pyinstaller(pyinstaller_cmd, version)
+        run_pyinstaller(pyinstaller_cmd)
         verify_output()
     except SystemExit:
         raise

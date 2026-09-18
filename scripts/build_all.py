@@ -8,11 +8,12 @@
 
 用法：
     python scripts/build_all.py
-    python scripts/build_all.py --version 1.0.0
     python scripts/build_all.py --skip exe         # 跳过代码打包，复用已有 dist/pet/
     python scripts/build_all.py --only portable    # 只生成绿色版
     python scripts/build_all.py --only installer   # 只生成安装包
     python scripts/build_all.py --only source      # 只生成源代码压缩包
+
+版本号来源：pet.spec 中的 VERSION 常量（改版本号 → 改 pet.spec）
 
 前置条件：
     pip install pyinstaller
@@ -37,7 +38,7 @@ SCRIPTS_DIR = Path(__file__).resolve().parent
 PROJECT_ROOT = SCRIPTS_DIR.parent
 RELEASE_DIR = PROJECT_ROOT / 'release'
 
-DEFAULT_VERSION = '1.0.0'
+DEFAULT_VERSION = '0.0.0'
 
 
 # ============================== 工具函数 ==============================
@@ -54,37 +55,23 @@ def _print_err(msg: str) -> None:
     print(f"    [失败] {msg}", file=sys.stderr)
 
 
-def get_version_from_git() -> str:
-    """优先使用 git tag 作为版本号"""
-    try:
-        proc = subprocess.run(
-            ['git', 'describe', '--tags', '--always'],
-            cwd=str(PROJECT_ROOT),
-            capture_output=True, text=True, timeout=5,
-        )
-        if proc.returncode == 0 and proc.stdout.strip():
-            return proc.stdout.strip()
-    except (FileNotFoundError, subprocess.TimeoutExpired):
-        pass
-    return DEFAULT_VERSION
+def get_version_from_spec() -> str:
+    """从 pet.spec 读取版本号（所有子脚本也从各自配置文件读取，不再传递）"""
+    import re
+    spec_file = SCRIPTS_DIR / 'pet.spec'
+    content = spec_file.read_text(encoding='utf-8')
+    m = re.search(r'^VERSION\s*=\s*["\']([^"\']+)["\']', content, re.MULTILINE)
+    return m.group(1) if m else DEFAULT_VERSION
 
 
-def run_script(script_name: str, version: str, skip_build: bool = False) -> int:
-    """调用 scripts/ 下的另一个打包脚本
-
-    :param script_name: 脚本文件名（如 build_exe.py）
-    :param version: 版本号（None 表示不传 --version）
-    :param skip_build: 是否传 --skip-build（仅 portable/installer 支持）
-    :return: 子进程退出码
-    """
+def run_script(script_name: str, skip_build: bool = False) -> int:
+    """调用 scripts/ 下的另一个打包脚本（版本号由各脚本从 spec/iss 读取）"""
     script_path = SCRIPTS_DIR / script_name
     if not script_path.is_file():
         _print_err(f"未找到脚本：{script_path}")
         return 1
 
     cmd = [sys.executable, str(script_path)]
-    if version:
-        cmd.extend(['--version', version])
     if skip_build:
         cmd.append('--skip-build')
 
@@ -111,8 +98,6 @@ def print_summary(version: str) -> None:
 
 def main() -> int:
     parser = argparse.ArgumentParser(description='桌面电子宠物 - 一键打包三个产物')
-    parser.add_argument('--version', default=None,
-                        help='版本号（默认：git tag 或日期 YYYYMMDD）')
     parser.add_argument('--skip', choices=['exe', 'portable', 'installer', 'source'],
                         help='跳过指定阶段（exe=代码打包, portable=绿色版, installer=安装包, source=源码包）')
     parser.add_argument('--only', choices=['exe', 'portable', 'installer', 'source'],
@@ -123,7 +108,7 @@ def main() -> int:
     print("  桌面电子宠物 - 一键打包（代码打包 + 绿色版 + 安装包）")
     print("=" * 60)
 
-    version = args.version or get_version_from_git()
+    version = get_version_from_spec()
     print(f"  版本号：{version}\n")
 
     # —— 决定执行哪些阶段 ——
@@ -138,27 +123,26 @@ def main() -> int:
 
     for stage in stages:
         if stage == 'exe':
-            ret = run_script('build_exe.py', version)
+            ret = run_script('build_exe.py')
             if ret != 0:
                 failures.append('exe')
                 break              # exe 失败，后续阶段无意义
             exe_built = True
 
         elif stage == 'portable':
-            # 如果 exe 已在本轮跑过，跳过 portable 内部重复调用 build_exe
             skip_build = exe_built or args.skip == 'exe' or (args.only and args.only != 'exe')
-            ret = run_script('build_portable.py', version, skip_build=skip_build)
+            ret = run_script('build_portable.py', skip_build=skip_build)
             if ret != 0:
                 failures.append('portable')
 
         elif stage == 'installer':
             skip_build = exe_built or args.skip == 'exe' or (args.only and args.only != 'exe')
-            ret = run_script('build_installer.py', version, skip_build=skip_build)
+            ret = run_script('build_installer.py', skip_build=skip_build)
             if ret != 0:
                 failures.append('installer')
 
         elif stage == 'source':
-            ret = run_script('build_source.py', version)
+            ret = run_script('build_source.py')
             if ret != 0:
                 failures.append('source')
 

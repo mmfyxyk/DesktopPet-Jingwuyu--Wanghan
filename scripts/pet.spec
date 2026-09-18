@@ -14,85 +14,67 @@
 """
 
 import os
+import sys
 
 # spec 文件所在目录（scripts/），项目根目录是它的上一级
 PROJECT_ROOT = os.path.abspath(os.path.join(SPECPATH, '..'))
 
+# ============================== 元数据配置 ==============================
+# 改产品名/公司名/版本号 → 改这里（build_installer.iss 也要同步改）
+VERSION = "0.4.0"
+PRODUCT_VERSION = "0.4.0"
+PRODUCT_NAME = "净无欲-王涵桌面电子宠物"
+COMPANY_NAME = "锐尘ruichen"
+EXE_FILE_DESCRIPTION = "净无欲-王涵桌面电子宠物"
+INTERNAL_NAME = "pet"
+ORIGINAL_FILENAME = "pet.exe"
+LEGAL_COPYRIGHT = "© 2025-2026 mmfyxyk. 基于 MIT License 开源。"
+
 ASSETS_DIR = os.path.join(PROJECT_ROOT, 'assets')
-
-# —— 应用程序图标（仅 pet.exe 用，安装包图标由 iss 单独指定）——
-# 放在 assets/icons/app.ico；不存在则用 PyInstaller 默认图标。
-APP_ICON = os.path.join(ASSETS_DIR, 'icons', 'app.ico')
-
-# 检测图标是否存在，不存在则置 None（避免 PyInstaller 报错）
+APP_ICON = os.path.join(ASSETS_DIR, 'WangHan', 'JingWuyu', 'icons', 'app.ico')
 icon_arg = APP_ICON if os.path.exists(APP_ICON) else None
 
 block_cipher = None
 
-# PyInstaller 6.x+ 不再自动注入版本信息相关类，需显式导入
 from PyInstaller.utils.win32.versioninfo import (
-    VSVersionInfo,
-    FixedFileInfo,
-    StringFileInfo,
-    StringTable,
-    StringStruct,
-    VarFileInfo,
-    VarStruct,
+    VSVersionInfo, FixedFileInfo, StringFileInfo,
+    StringTable, StringStruct, VarFileInfo, VarStruct,
 )
-
 
 # ============================== 版本信息资源 ==============================
 # 嵌入 pet.exe 的 VS_VERSIONINFO 资源块。
 # 右键 pet.exe → 属性 → 详细信息 里看到的字段就来自这里。
-# 注意：这【不是】代码签名，只是版本信息资源。SmartScreen 看的是数字签名，
-# 不看这里的 CompanyName。但属性页能显示正规的发布者/产品名/版本号。
-#
-# 所有元数据由 build_exe.py 通过环境变量传入（来源 scripts/app_meta.py）。
-# 改产品名/公司名/版本号 → 编辑 scripts/app_meta.py，不要改这里。
+# StringTable ID '080404B0'：0804=简体中文, 04B0=Unicode(1200的十六进制)
 
-import os as _os
-_pet_version_str = _os.environ.get('PET_VERSION', '1.0.0')
-_pet_product_version_str = _os.environ.get('PET_PRODUCT_VERSION', _pet_version_str)
-_pet_product_name = _os.environ.get('PET_PRODUCT_NAME', '桌面电子宠物')
-_pet_company_name = _os.environ.get('PET_COMPANY_NAME', '')
-_pet_file_desc = _os.environ.get('PET_FILE_DESCRIPTION', _pet_product_name)
-_pet_internal_name = _os.environ.get('PET_INTERNAL_NAME', 'pet')
-_pet_original_filename = _os.environ.get('PET_ORIGINAL_FILENAME', 'pet.exe')
-_pet_legal_copyright = _os.environ.get('PET_LEGAL_COPYRIGHT', '')
-
-# VS_VERSIONINFO 要求 4 段数字（dword），缺位补 0
 def _to_quad(v: str) -> tuple:
     parts = (v + '.0.0.0').split('.')[:4]
     try:
         return tuple(int(p) for p in parts)
     except ValueError:
         return (1, 0, 0, 0)
-_pet_file_quad = _to_quad(_pet_version_str)
-_pet_product_quad = _to_quad(_pet_product_version_str)
-
 
 version_info = VSVersionInfo(
     ffi=FixedFileInfo(
-        filevers=_pet_file_quad,             # 文件版本（4 段数字）
-        prodvers=_pet_product_quad,           # 产品版本（4 段数字）
-        mask=0x3F,                            # 类型掩码
-        flags=0x0,                            # 标志位
-        OS=0x40004,                           # VOS_NT_WINDOWS32
-        fileType=0x1,                        # VFT_APP（普通应用程序）
+        filevers=_to_quad(VERSION),
+        prodvers=_to_quad(PRODUCT_VERSION),
+        mask=0x3F,
+        flags=0x0,
+        OS=0x40004,
+        fileType=0x1,
         subtype=0x0,
         date=(0, 0),
     ),
     kids=[
         StringFileInfo([
-            StringTable('080404B0', [         # 0804=简体中文, 04B0=Unicode(1200)
-                StringStruct('CompanyName', _pet_company_name),
-                StringStruct('FileDescription', _pet_file_desc),
-                StringStruct('FileVersion', _pet_version_str),
-                StringStruct('InternalName', _pet_internal_name),
-                StringStruct('LegalCopyright', _pet_legal_copyright),
-                StringStruct('OriginalFilename', _pet_original_filename),
-                StringStruct('ProductName', _pet_product_name),
-                StringStruct('ProductVersion', _pet_product_version_str),
+            StringTable('080404B0', [
+                StringStruct('CompanyName', COMPANY_NAME),
+                StringStruct('FileDescription', EXE_FILE_DESCRIPTION),
+                StringStruct('FileVersion', VERSION),
+                StringStruct('InternalName', INTERNAL_NAME),
+                StringStruct('LegalCopyright', LEGAL_COPYRIGHT),
+                StringStruct('OriginalFilename', ORIGINAL_FILENAME),
+                StringStruct('ProductName', PRODUCT_NAME),
+                StringStruct('ProductVersion', PRODUCT_VERSION),
             ]),
         ]),
         VarFileInfo([VarStruct('Translation', [0x0804, 1200])]),

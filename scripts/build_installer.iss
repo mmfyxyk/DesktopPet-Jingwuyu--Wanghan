@@ -18,20 +18,19 @@
 ;       表示 iss 文件所在目录，等价于 scripts/ 目录。
 ; ==========================================================================
 
-; 注意：产品名/版本号/公司名/版权等元数据优先由 build_installer.py 通过 /D 传入，
-; 与 scripts/app_meta.py 保持一致。下面的值是直接用 ISCC 编译时的兜底默认值。
+; —— 元数据配置（改版本号/产品名等 → 改这里，pet.spec 也要同步改）——
 #define MyAppName          "净无欲-王涵桌面电子宠物"
 #define MyAppNameEn        "DesktopPet"
 #define MyAppExeName       "pet.exe"
-#define MyAppVersion       "1.0.0"
+#define MyAppVersion       "0.4.0"
 #define MyAppPublisher     "锐尘ruichen"
 #define MyAppCopyright     "© 2025-2026 mmfyxyk. 基于 MIT License 开源。"
 #define MyAppDescription   "净无欲-王涵桌面电子宠物安装程序"
 #define MyAppURL          "https://github.com/mmfyxyk/DesktopPet-Jingwuyu--Wanghan"
 
 ; 这些路径以 iss 文件所在 scripts/ 为基准
-#define ProjectRoot        "{#SourcePath}\.."
-#define DistPetDir        "{#ProjectRoot}\dist\pet"
+#define ProjectRoot        SourcePath + "\.."
+#define DistPetDir        ProjectRoot + "\dist\pet"
 
 [Setup]
 AppId={{B7E2F3A1-9D4C-4E5F-8A1B-2C3D4E5F6A7B}
@@ -55,14 +54,19 @@ WizardStyle=modern
 ArchitecturesAllowed=x64compatible
 ArchitecturesInstallIn64BitMode=x64compatible
 
+; —— setup.exe 属性「详细信息」字段（右键 setup.exe → 属性 → 详细信息）——
+VersionInfoVersion={#MyAppVersion}
+VersionInfoProductVersion={#MyAppVersion}
+VersionInfoCompany={#MyAppPublisher}
+VersionInfoDescription={#MyAppDescription}
+;VersionInfoTextVersion={#MyAppVersion}
+;VersionInfoProductTextVersion={#MyAppVersion}
+
 ; 允许用户不创建桌面快捷方式
 AllowNoIcons=yes
 
 ; 显式开启「选择目标位置」页（默认就是 yes，写出来更清楚）
 DisableDirPage=no
-; 显式开启「选择开始菜单文件夹」页（已用 DisableProgramGroupPage=yes 跳过，
-; 如果以后想恢复让用户选开始菜单组，把下面这行改 no 并去掉 DisableProgramGroupPage）
-DisableProgramGroupPage=yes
 
 ; 卸载时询问是否保留用户数据（通过 [Code] 段 CurUninstallStepChanged 实现）
 UninstallDisplayIcon={app}\{#MyAppExeName}
@@ -73,10 +77,9 @@ CreateUninstallRegKey=yes
 ; LicenseFile={#ProjectRoot}\LICENSE
 
 ; —— 安装包图标（setup.exe 用，与应用程序图标分开）——
-; 放在 assets/icons/installer.ico；不存在时 Inno Setup 用默认图标。
-; 若文件不存在，编译期不会报错，只是 setup.exe 显示默认图标。
-#if FileExists("{#ProjectRoot}\assets\icons\installer.ico")
-  SetupIconFile="{#ProjectRoot}\assets\icons\installer.ico"
+; 放在 assets/WangHan/JingWuyu/icons/installer.ico；不存在时 Inno Setup 用默认图标。
+#if FileExists(ProjectRoot + "\assets\WangHan\JingWuyu\icons\installer.ico")
+  SetupIconFile={#ProjectRoot}\assets\WangHan\JingWuyu\icons\installer.ico
 #endif
 
 [Languages]
@@ -127,6 +130,27 @@ Type: filesandordirs; Name: "{app}\data\tmp"
 Type: filesandordirs; Name: "{app}\*.log"
 
 [Code]
+// —— 安装后把 unins000.* 改名为 uninstall.*，并更新注册表 ——
+procedure CurStepChanged(CurStep: TSetupStep);
+var
+  AppDir, RegKey: String;
+begin
+  if CurStep = ssPostInstall then
+  begin
+    AppDir := ExpandConstant('{app}');
+    // 重命名 exe + dat（uninstaller 靠同名 .dat 读取卸载数据）
+    if FileExists(AppDir + '\unins000.exe') then
+    begin
+      RenameFile(AppDir + '\unins000.exe', AppDir + '\uninstall.exe');
+      if FileExists(AppDir + '\unins000.dat') then
+        RenameFile(AppDir + '\unins000.dat', AppDir + '\uninstall.dat');
+      // 更新注册表卸载命令路径
+      RegKey := 'Software\Microsoft\Windows\CurrentVersion\Uninstall\{B7E2F3A1-9D4C-4E5F-8A1B-2C3D4E5F6A7B}_is1';
+      RegWriteStringValue(HKLM, RegKey, 'UninstallString', '"' + AppDir + '\uninstall.exe"');
+    end;
+  end;
+end;
+
 // —— 卸载时询问用户是否保留数据 ——
 procedure CurUninstallStepChanged(CurUninstallStep: TUninstallStep);
 begin

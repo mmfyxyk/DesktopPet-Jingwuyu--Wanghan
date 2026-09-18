@@ -22,10 +22,8 @@ from pathlib import Path
 SCRIPTS_DIR = Path(__file__).resolve().parent
 PROJECT_ROOT = SCRIPTS_DIR.parent
 RELEASE_DIR = PROJECT_ROOT / 'release'
-# 让脚本能 import 同目录下的 app_meta.py
-sys.path.insert(0, str(SCRIPTS_DIR))
 
-DEFAULT_VERSION = '1.0.0'
+DEFAULT_VERSION = '0.0.0'
 
 
 # —— 打包时排除的目录/文件 ——
@@ -41,6 +39,7 @@ EXCLUDE_DIRS = {
     'data',                          # 运行时数据（cookies/设置/历史，含隐私）
     'output',                        # 爬虫下载的视频
     '.trae',                         # AI 配置
+    'scripts',
 }
 
 EXCLUDE_FILES = {
@@ -58,23 +57,13 @@ def _print_ok(msg: str) -> None:
     print(f"    [OK] {msg}")
 
 
-def get_version_from_git() -> str:
-    """优先使用 git tag 作为版本号；没有 tag 时用 app_meta.py 里的 VERSION"""
-    try:
-        proc = subprocess.run(
-            ['git', 'describe', '--tags', '--exact-match'],
-            cwd=str(PROJECT_ROOT),
-            capture_output=True, text=True, timeout=5,
-        )
-        if proc.returncode == 0 and proc.stdout.strip():
-            return proc.stdout.strip().lstrip('v')
-    except (FileNotFoundError, subprocess.TimeoutExpired):
-        pass
-    try:
-        from app_meta import VERSION
-        return VERSION
-    except ImportError:
-        return DEFAULT_VERSION
+def get_version_from_spec() -> str:
+    """从 pet.spec 读取版本号"""
+    import re
+    spec_file = SCRIPTS_DIR / 'pet.spec'
+    content = spec_file.read_text(encoding='utf-8')
+    m = re.search(r'^VERSION\s*=\s*["\']([^"\']+)["\']', content, re.MULTILINE)
+    return m.group(1) if m else DEFAULT_VERSION
 
 
 def should_exclude(name: str) -> bool:
@@ -135,7 +124,7 @@ def main() -> int:
     print("  桌面电子宠物 - 源代码压缩包打包")
     print("=" * 60)
 
-    version = args.version or get_version_from_git()
+    version = args.version or get_version_from_spec()
     print(f"  版本号：{version}")
 
     try:

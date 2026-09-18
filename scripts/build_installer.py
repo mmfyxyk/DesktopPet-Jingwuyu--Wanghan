@@ -36,10 +36,7 @@ ISS_FILE = SCRIPTS_DIR / 'build_installer.iss'
 DIST_PET_DIR = PROJECT_ROOT / 'dist' / 'pet'
 RELEASE_DIR = PROJECT_ROOT / 'release'
 
-# 让脚本能 import 同目录下的 app_meta.py
-sys.path.insert(0, str(SCRIPTS_DIR))
-
-DEFAULT_VERSION = '1.0.0'
+DEFAULT_VERSION = '0.0.0'
 
 
 # ============================== 工具函数 ==============================
@@ -56,19 +53,12 @@ def _print_err(msg: str) -> None:
     print(f"    [失败] {msg}", file=sys.stderr)
 
 
-def get_version_from_git() -> str:
-    """优先使用 git tag 作为版本号"""
-    try:
-        proc = subprocess.run(
-            ['git', 'describe', '--tags', '--always'],
-            cwd=str(PROJECT_ROOT),
-            capture_output=True, text=True, timeout=5,
-        )
-        if proc.returncode == 0 and proc.stdout.strip():
-            return proc.stdout.strip()
-    except (FileNotFoundError, subprocess.TimeoutExpired):
-        pass
-    return DEFAULT_VERSION
+def get_version_from_iss() -> str:
+    """从 build_installer.iss 读取版本号"""
+    import re
+    content = ISS_FILE.read_text(encoding='utf-8')
+    m = re.search(r'#define MyAppVersion\s+"([^"]+)"', content)
+    return m.group(1) if m else DEFAULT_VERSION
 
 
 def find_iscc() -> Optional[str]:
@@ -88,8 +78,17 @@ def find_iscc() -> Optional[str]:
         _print_ok(f"PATH 找到：{iscc}")
         return iscc
 
-    # 方式 2：注册表
+    # 方式 2：注册表（Inno Setup 6 + 7）
     candidates = [
+        (winreg.HKEY_LOCAL_MACHINE,
+         r"SOFTWARE\Microsoft\Windows\CurrentVersion\Uninstall\Inno Setup 7_is1",
+         "InstallLocation"),
+        (winreg.HKEY_LOCAL_MACHINE,
+         r"SOFTWARE\WOW6432Node\Microsoft\Windows\CurrentVersion\Uninstall\Inno Setup 7_is1",
+         "InstallLocation"),
+        (winreg.HKEY_CURRENT_USER,
+         r"SOFTWARE\Microsoft\Windows\CurrentVersion\Uninstall\Inno Setup 7_is1",
+         "InstallLocation"),
         (winreg.HKEY_LOCAL_MACHINE,
          r"SOFTWARE\Microsoft\Windows\CurrentVersion\Uninstall\Inno Setup 6_is1",
          "InstallLocation"),
@@ -114,12 +113,15 @@ def find_iscc() -> Optional[str]:
         except OSError:
             continue
 
-    # 方式 3：常见安装路径
+    # 方式 3：常见安装路径（Inno Setup 6 + 7）
     common_paths = [
+        r"C:\Program Files\Inno Setup 7\ISCC.exe",
         r"C:\Program Files (x86)\Inno Setup 6\ISCC.exe",
         r"C:\Program Files\Inno Setup 6\ISCC.exe",
+        r"D:\Program Files\Inno Setup 7\ISCC.exe",
         r"D:\Program Files (x86)\Inno Setup 6\ISCC.exe",
         r"D:\Program Files\Inno Setup 6\ISCC.exe",
+        r"E:\Program Files\Inno Setup 7\ISCC.exe",
         r"E:\Program Files (x86)\Inno Setup 6\ISCC.exe",
         r"E:\Program Files\Inno Setup 6\ISCC.exe",
     ]
@@ -133,7 +135,7 @@ def find_iscc() -> Optional[str]:
         "    请确认已安装 Inno Setup 6+：\n"
         "      下载页：https://jrsoftware.org/isdl.php\n"
         "      安装后如未自动加入 PATH，可手动把 ISCC.exe 全路径传给本脚本：\n"
-        "        python scripts/build_installer.py --iscc \"C:\\\\Program Files (x86)\\\\Inno Setup 6\\\\ISCC.exe\""
+        '        python scripts/build_installer.py --iscc "C:\\Program Files\\Inno Setup 7\\ISCC.exe"'
     )
     return None
 
@@ -167,33 +169,14 @@ def verify_pet_dist() -> None:
     _print_ok(f"找到 {exe_path.relative_to(PROJECT_ROOT)}")
 
 
-def run_iscc(iscc_path: str, version: str) -> Path:
-    """调用 ISCC.exe 编译 iss 文件
-
-    通过 /D 命令行参数覆盖 iss 中的 #define 变量，
-    让安装包的产品名、版本号、公司名等与 app_meta.py 一致。
-    """
-    from app_meta import (
-        PRODUCT_NAME, COMPANY_NAME, LEGAL_COPYRIGHT, ORIGINAL_FILENAME,
-        INSTALLER_DESCRIPTION, APP_URL,
-    )
-
+def run_iscc(iscc_path: str) -> Path:
+    """调用 ISCC.exe 编译 iss 文件（元数据由 iss #define 内联，无需 /D 传参）"""
+    version = get_version_from_iss()
     _print_step(f"调用 ISCC 编译安装包（版本：{version}）")
 
     RELEASE_DIR.mkdir(parents=True, exist_ok=True)
 
-    cmd = [
-        iscc_path,
-        f"/DMyAppName={PRODUCT_NAME}",
-        f"/DMyAppVersion={version}",
-        f"/DMyAppPublisher={COMPANY_NAME}",
-        f"/DMyAppCopyright={LEGAL_COPYRIGHT}",
-        f"/DMyAppExeName={ORIGINAL_FILENAME}",
-        f"/DMyAppDescription={INSTALLER_DESCRIPTION}",
-        f"/DMyAppURL={APP_URL}",
-        f"/Q",                          # 安静模式，仅输出错误
-        str(ISS_FILE),
-    ]
+    cmd = [iscc_path, "/Q", str(ISS_FILE)]
     print(f"    执行命令：{' '.join(cmd)}")
 
     proc = subprocess.run(
@@ -201,7 +184,7 @@ def run_iscc(iscc_path: str, version: str) -> Path:
         cwd=str(PROJECT_ROOT),
         capture_output=True,
         text=True,
-        encoding='gbk',                # ISCC 中文输出是 GBK
+        encoding='gbk',
         errors='replace',
     )
 
@@ -210,7 +193,6 @@ def run_iscc(iscc_path: str, version: str) -> Path:
         print(proc.stderr, file=sys.stderr)
         raise SystemExit(f"ISCC 编译失败，退出码 {proc.returncode}")
 
-    # ISCC 安静模式下也输出一些信息，回显给用户看
     if proc.stdout.strip():
         print(proc.stdout)
 
@@ -227,8 +209,6 @@ def run_iscc(iscc_path: str, version: str) -> Path:
 
 def main() -> int:
     parser = argparse.ArgumentParser(description='桌面电子宠物 - 安装包打包 (Inno Setup)')
-    parser.add_argument('--version', default=None,
-                        help='版本号（默认：git tag 或日期 YYYYMMDD）')
     parser.add_argument('--iscc', default=None,
                         help='手动指定 ISCC.exe 路径（自动探测失败时使用）')
     parser.add_argument('--skip-build', action='store_true',
@@ -239,15 +219,13 @@ def main() -> int:
     print("  桌面电子宠物 - 第三步：安装包打包 (Inno Setup)")
     print("=" * 60)
 
-    # 优先级：命令行 > 自动探测
     iscc_path = args.iscc or find_iscc()
     if not iscc_path:
         return 1
 
-    version = args.version or get_version_from_git()
+    version = get_version_from_iss()
     print(f"  版本号：{version}")
 
-    # 提前创建 release 目录，即使后续失败也存在
     RELEASE_DIR.mkdir(parents=True, exist_ok=True)
 
     try:
@@ -256,7 +234,7 @@ def main() -> int:
         else:
             print("\n>>> 跳过 build_exe.py（--skip-build）")
         verify_pet_dist()
-        run_iscc(iscc_path, version)
+        run_iscc(iscc_path)
     except SystemExit:
         raise
     except Exception as e:

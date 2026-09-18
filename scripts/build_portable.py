@@ -35,8 +35,6 @@ from pathlib import Path
 
 SCRIPTS_DIR = Path(__file__).resolve().parent
 PROJECT_ROOT = SCRIPTS_DIR.parent
-# 让脚本能 import 同目录下的 app_meta.py
-sys.path.insert(0, str(SCRIPTS_DIR))
 DIST_DIR = PROJECT_ROOT / 'dist'
 PET_DIST_DIR = DIST_DIR / 'pet'
 RELEASE_DIR = PROJECT_ROOT / 'release'
@@ -95,26 +93,13 @@ def _support_ignore(directory: str, names: list[str]) -> set[str]:
     return excluded
 
 
-def get_version_from_git() -> str:
-    """优先使用 git tag 作为版本号；没有 tag 时用 app_meta.py 里的 VERSION
-    （不用 commit hash，因为 zip 文件名里带 hash 不友好）"""
-    try:
-        proc = subprocess.run(
-            ['git', 'describe', '--tags', '--exact-match'],
-            cwd=str(PROJECT_ROOT),
-            capture_output=True, text=True, timeout=5,
-        )
-        if proc.returncode == 0 and proc.stdout.strip():
-            tag = proc.stdout.strip().lstrip('v')
-            return tag
-    except (FileNotFoundError, subprocess.TimeoutExpired):
-        pass
-    # 没有 tag 时从 app_meta.py 读默认版本号
-    try:
-        from app_meta import VERSION
-        return VERSION
-    except ImportError:
-        return DEFAULT_VERSION
+def get_version_from_spec() -> str:
+    """从 pet.spec 读取版本号"""
+    import re
+    spec_file = SCRIPTS_DIR / 'pet.spec'
+    content = spec_file.read_text(encoding='utf-8')
+    m = re.search(r'^VERSION\s*=\s*["\']([^"\']+)["\']', content, re.MULTILINE)
+    return m.group(1) if m else DEFAULT_VERSION
 
 
 def run_build_exe() -> None:
@@ -295,7 +280,7 @@ def main() -> int:
     print("  桌面电子宠物 - 第二步：绿色版打包 (zip)")
     print("=" * 60)
 
-    version = args.version or get_version_from_git()
+    version = args.version or get_version_from_spec()
     print(f"  版本号：{version}")
 
     # 提前创建 release 目录，即使后续失败也存在
