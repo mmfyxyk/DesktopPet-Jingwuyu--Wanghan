@@ -21,7 +21,7 @@ PROJECT_ROOT = os.path.abspath(os.path.join(SPECPATH, '..'))
 
 # ============================== 元数据配置 ==============================
 # 改产品名/公司名/版本号 → 改这里（build_installer.iss 也要同步改）
-VERSION = "0.4.0"
+VERSION = "0.4.0.1"
 PRODUCT_VERSION = "0.4.0"
 PRODUCT_NAME = "净无欲-王涵桌面电子宠物"
 COMPANY_NAME = "锐尘ruichen"

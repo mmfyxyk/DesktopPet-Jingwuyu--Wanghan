@@ -22,7 +22,8 @@
 #define MyAppName          "净无欲-王涵桌面电子宠物"
 #define MyAppNameEn        "DesktopPet"
 #define MyAppExeName       "pet.exe"
-#define MyAppVersion       "0.4.0"
+#define MyAppVersion       "0.4.0.1"
+#define MyProductVersion   "0.4.0"
 #define MyAppPublisher     "锐尘ruichen"
 #define MyAppCopyright     "© 2025-2026 mmfyxyk. 基于 MIT License 开源。"
 #define MyAppDescription   "净无欲-王涵桌面电子宠物安装程序"
@@ -56,7 +57,7 @@ ArchitecturesInstallIn64BitMode=x64compatible
 
 ; —— setup.exe 属性「详细信息」字段（右键 setup.exe → 属性 → 详细信息）——
 VersionInfoVersion={#MyAppVersion}
-VersionInfoProductVersion={#MyAppVersion}
+VersionInfoProductVersion={#MyProductVersion}
 VersionInfoCompany={#MyAppPublisher}
 VersionInfoDescription={#MyAppDescription}
 ;VersionInfoTextVersion={#MyAppVersion}

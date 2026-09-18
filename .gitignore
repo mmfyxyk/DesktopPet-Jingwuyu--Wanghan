@@ -18,9 +18,9 @@ build/
 dist/
 release/
 *.spec
-# 例外：手工维护的打包脚本入库
-!scripts/
-!scripts/*.spec
+# 例外：手工维护的打包脚本入本地库，不入远程库
+scripts/
+#!scripts/*.spec
 
 # IDE
 .idea/
