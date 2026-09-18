@@ -1,8 +1,0 @@
-# 所有导出物、中间产物，以及你本地复制的 bundle 副本 —— 不进入任何 git。
-# （assets-collect/ 整个目录本身属于"桌宠项目外的本地工具链"，也不打算公开。）
-output/
-bundles-local/
-inventory.json
-
-# 临时下载/缓存
-.tmp/
