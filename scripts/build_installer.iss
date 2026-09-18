@@ -48,7 +48,7 @@ DefaultGroupName={#MyAppName}
 DisableProgramGroupPage=yes
 OutputDir={#ProjectRoot}\release
 OutputBaseFilename=DesktopPet-Setup-{#MyAppVersion}
-Compression=lzma2/ultra64
+Compression=lzma2/max
 SolidCompression=yes
 WizardStyle=modern
 ArchitecturesAllowed=x64compatible
@@ -77,10 +77,7 @@ CreateUninstallRegKey=yes
 ; LicenseFile={#ProjectRoot}\LICENSE
 
 ; —— 安装包图标（setup.exe 用，与应用程序图标分开）——
-; 放在 assets/WangHan/JingWuyu/icons/installer.ico；不存在时 Inno Setup 用默认图标。
-#if FileExists(ProjectRoot + "\assets\WangHan\JingWuyu\icons\installer.ico")
-  SetupIconFile={#ProjectRoot}\assets\WangHan\JingWuyu\icons\installer.ico
-#endif
+SetupIconFile={#ProjectRoot}\assets\WangHan\JingWuyu\icons\installer.ico
 
 [Languages]
 Name: "chinesesimp"; MessagesFile: "compiler:Languages\ChineseSimplified.isl"
