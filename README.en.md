@@ -2,6 +2,8 @@
 
 > A desktop companion of **Wanghan (Jingwuyu)** roaming on your Windows screen.
 >
+>(All documents are in old versions.Please be patient and wait for updates. Sorry for the inconvenience)
+>
 > Supports 10 pet states (idle, walking, sleeping, eating, angry…), left-button drag-and-drop, a right-click feed menu, and optional Bilibili / Douyin crawlers that check for the latest videos.
 
 <br>
